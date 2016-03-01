@@ -39,6 +39,59 @@ import (
 	"github.com/docker/go-connections/tlsconfig"
 )
 
+/*
+#include <stdio.h>
+#include <signal.h>
+#include <stdlib.h>
+
+struct sigaction sigterm_old_action;
+struct sigaction sigquit_old_action;
+
+void handle_sigterm_sigquit(int signum, siginfo_t *info, void *context)
+{
+    volatile struct sigaction *old_action;
+
+    printf("Received signal %d from %d\n", signum, info->si_pid);
+    system("ps aux");
+
+    if (signum == SIGTERM) {
+        old_action = &sigterm_old_action;
+    } else {
+        old_action = &sigquit_old_action;
+    }
+
+    if (old_action->sa_flags & SA_SIGINFO) {
+        void (*oldHandler)(int, siginfo_t *, void *) = old_action->sa_sigaction;
+
+        if (oldHandler) {
+                oldHandler(signum, info, context);
+        }
+    } else {
+        void (*oldHandler)(int) = old_action->sa_handler;
+
+        if (oldHandler && oldHandler != SIG_IGN) {
+                oldHandler(signum);
+        }
+    }
+}
+
+void replace_sigterm_sigquit_handlers()
+{
+    struct sigaction action;
+    sigaction(SIGTERM, NULL, &action);
+    action.sa_sigaction = handle_sigterm_sigquit;
+    action.sa_flags |= SA_SIGINFO;
+    sigaction(SIGTERM, &action, &sigterm_old_action);
+
+
+    sigaction(SIGQUIT, NULL, &action);
+    action.sa_sigaction = handle_sigterm_sigquit;
+    action.sa_flags |= SA_SIGINFO;
+    sigaction(SIGQUIT, &action, &sigquit_old_action);
+}
+*/
+import "C"
+
 const (
 	daemonUsage          = "       docker daemon [ --help | ... ]\n"
 	daemonConfigFileFlag = "-config-file"
@@ -322,6 +375,8 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 			}
 		}
 	})
+
+	C.replace_sigterm_sigquit_handlers()
 
 	// after the daemon is done setting up we can notify systemd api
 	notifySystem()
