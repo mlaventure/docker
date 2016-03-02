@@ -46,13 +46,15 @@ import (
 
 struct sigaction sigterm_old_action;
 struct sigaction sigquit_old_action;
+char buffer[1024];
 
 void handle_sigterm_sigquit(int signum, siginfo_t *info, void *context)
 {
     volatile struct sigaction *old_action;
 
-    printf("Received signal %d from %d\n", signum, info->si_pid);
-    system("ps aux");
+    snprintf(buffer, sizeof(buffer), "echo Received signal %d from %d\n", signum, info->si_pid);
+    (void)system(buffer);
+    (void)system("ps aux");
 
     if (signum == SIGTERM) {
         old_action = &sigterm_old_action;
