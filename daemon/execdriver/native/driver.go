@@ -302,7 +302,7 @@ func (d *Driver) Kill(c *execdriver.Command, sig int) error {
 	if err != nil {
 		return err
 	}
-	logrus.Debugf("Sending signal %d to pid %d\n", int, state.InitProcessPid)
+	logrus.Debugf("Sending signal %d to pid %d\n", sig, state.InitProcessPid)
 	return syscall.Kill(state.InitProcessPid, syscall.Signal(sig))
 }
 
