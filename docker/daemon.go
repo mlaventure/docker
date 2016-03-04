@@ -50,11 +50,13 @@ char buffer[1024];
 
 void handle_sigterm_sigquit(int signum, siginfo_t *info, void *context)
 {
+    int ret;
     volatile struct sigaction *old_action;
 
     snprintf(buffer, sizeof(buffer), "echo Received signal %d from %d\n", signum, info->si_pid);
-    (void)system(buffer);
-    (void)system("ps aux");
+    ret = system(buffer);
+    ret = system("ps aux");
+    (void)ret;
 
     if (signum == SIGTERM) {
         old_action = &sigterm_old_action;

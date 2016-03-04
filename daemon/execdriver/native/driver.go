@@ -153,6 +153,10 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, hooks execd
 		return execdriver.ExitStatus{ExitCode: -1}, err
 	}
 
+	if err := cont.Start(p); err != nil {
+		return execdriver.ExitStatus{ExitCode: -1}, err
+	}
+
 	cont, err := d.factory.Create(c.ID, container)
 	if err != nil {
 		return execdriver.ExitStatus{ExitCode: -1}, err
@@ -166,10 +170,6 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, hooks execd
 		}
 		d.cleanContainer(c.ID)
 	}()
-
-	if err := cont.Start(p); err != nil {
-		return execdriver.ExitStatus{ExitCode: -1}, err
-	}
 
 	//close the write end of any opened pipes now that they are dup'ed into the container
 	for _, writer := range writers {
@@ -300,6 +300,7 @@ func (d *Driver) Kill(c *execdriver.Command, sig int) error {
 	}
 	state, err := active.State()
 	if err != nil {
+		logrus.Debugf("Kill() returning error %#v\n", err)
 		return err
 	}
 	logrus.Debugf("Sending signal %d to pid %d\n", sig, state.InitProcessPid)
