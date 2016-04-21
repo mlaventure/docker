@@ -1899,24 +1899,46 @@ func (s *DockerDaemonSuite) TestDaemonNoSpaceLeftOnDeviceError(c *check.C) {
 
 	testDir, err := ioutil.TempDir("", "no-space-left-on-device-test")
 	c.Assert(err, checker.IsNil)
+	testImg := filepath.Join(testDir, "testfs.img")
 	defer os.RemoveAll(testDir)
 	c.Assert(mount.MakeRShared(testDir), checker.IsNil)
 	defer mount.Unmount(testDir)
 
-	// create a 2MiB image and mount it as graph root
+	imgSize := 2
+	storageDriver := os.Getenv("DOCKER_GRAPHDRIVER")
+	switch storageDriver {
+	case "btrfs", "zfs":
+		imgSize = 64 // 64M minimun required
+	}
+
+	// create a testimage image and mount it as graph root
 	// Why in a container? Because `mount` sometimes behaves weirdly and often fails outright on this test in debian:jessie (which is what the test suite runs under if run from the Makefile)
-	dockerCmd(c, "run", "--rm", "-v", testDir+":/test", "busybox", "sh", "-c", "dd of=/test/testfs.img bs=1M seek=2 count=0")
-	out, _, err := runCommandWithOutput(exec.Command("mkfs.ext4", "-F", filepath.Join(testDir, "testfs.img"))) // `mkfs.ext4` is not in busybox
+	dockerCmd(c, "run", "--rm", "-v", testDir+":/test", "busybox", "sh", "-c", fmt.Sprintf("dd of=/test/testfs.img bs=1M seek=%d count=0", imgSize))
+
+	var cmd *exec.Cmd
+
+	cmd = exec.Command("ls", "-la", testDir)
+
+	{
+		out, _, _ := runCommandWithOutput(cmd) // fs maker commands are not in busybox
+		fmt.Printf("ls -la: %s\n", out)
+	}
+	switch storageDriver {
+	case "btrfs":
+		cmd = exec.Command("mkfs.btrfs", testImg)
+	case "zfs":
+		cmd = exec.Command("zpool", "create", "-m", filepath.Join(testDir, "test-mount"), "testfs-mount", testImg)
+	default:
+		storageDriver = "ext4"
+		cmd = exec.Command("mkfs.ext4", "-F", testImg)
+	}
+	fmt.Printf("%#v\n", cmd)
+	out, _, err := runCommandWithOutput(cmd) // fs maker commands are not in busybox
 	c.Assert(err, checker.IsNil, check.Commentf(out))
 
-	cmd := exec.Command("losetup", "-f", "--show", filepath.Join(testDir, "testfs.img"))
-	loout, err := cmd.CombinedOutput()
-	c.Assert(err, checker.IsNil)
-	loopname := strings.TrimSpace(string(loout))
-	defer exec.Command("losetup", "-d", loopname).Run()
-
-	dockerCmd(c, "run", "--privileged", "--rm", "-v", testDir+":/test:shared", "busybox", "sh", "-c", fmt.Sprintf("mkdir -p /test/test-mount && mount -t ext4 -no loop,rw %v /test/test-mount", loopname))
-	defer mount.Unmount(filepath.Join(testDir, "test-mount"))
+	if storageDriver != "zfs" {
+		dockerCmd(c, "run", "--privileged", "--rm", "-v", testDir+":/test:shared", "busybox", "sh", "-c", "mkdir -p /test/test-mount && mount -t "+storageDriver+" -no loop,rw /test/testfs.img /test/test-mount")
+	}
 
 	err = s.d.Start("--graph", filepath.Join(testDir, "test-mount"))
 	defer s.d.Stop()

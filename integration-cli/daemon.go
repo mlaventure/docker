@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -121,6 +122,25 @@ func (d *Daemon) getClientConfig() (*clientConfig, error) {
 		scheme:    scheme,
 		addr:      addr,
 	}, nil
+}
+
+func (d *Daemon) CleanupStorage() {
+	switch d.storageDriver {
+	case "btrfs":
+		subvolumesDir := filepath.Join(d.root, "btrfs", "subvolumes")
+		fis, err := ioutil.ReadDir(subvolumesDir)
+		if err != nil {
+			return
+		}
+		for _, fi := range fis {
+			if fi.IsDir() {
+				err = exec.Command("btrfs", "subvolume", "delete", filepath.Join(subvolumesDir, fi.Name())).Run()
+				if err != nil {
+					fmt.Println("failed to remove btrfs subvolume @", filepath.Join(subvolumesDir, fi.Name()), "-", err)
+				}
+			}
+		}
+	}
 }
 
 // Start will start the daemon and return once it is ready to receive requests.

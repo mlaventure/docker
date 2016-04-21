@@ -62,6 +62,7 @@ func (s *DockerRegistrySuite) TearDownTest(c *check.C) {
 	}
 	if s.d != nil {
 		s.d.Stop()
+		s.d.CleanupStorage()
 	}
 	s.ds.TearDownTest(c)
 }
@@ -90,6 +91,7 @@ func (s *DockerSchema1RegistrySuite) TearDownTest(c *check.C) {
 	}
 	if s.d != nil {
 		s.d.Stop()
+		s.d.CleanupStorage()
 	}
 	s.ds.TearDownTest(c)
 }
@@ -120,6 +122,7 @@ func (s *DockerRegistryAuthHtpasswdSuite) TearDownTest(c *check.C) {
 	}
 	if s.d != nil {
 		s.d.Stop()
+		s.d.CleanupStorage()
 	}
 	s.ds.TearDownTest(c)
 }
@@ -149,6 +152,7 @@ func (s *DockerRegistryAuthTokenSuite) TearDownTest(c *check.C) {
 	}
 	if s.d != nil {
 		s.d.Stop()
+		s.d.CleanupStorage()
 	}
 	s.ds.TearDownTest(c)
 }
@@ -180,6 +184,7 @@ func (s *DockerDaemonSuite) TearDownTest(c *check.C) {
 	testRequires(c, DaemonIsLinux)
 	if s.d != nil {
 		s.d.Stop()
+		s.d.CleanupStorage()
 	}
 	s.ds.TearDownTest(c)
 }
