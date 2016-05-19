@@ -140,6 +140,12 @@ func (d *Daemon) CleanupStorage() {
 				}
 			}
 		}
+	case "zfs":
+		cmd := exec.Command("zfs", "destroy", "-r", "docker-bundle")
+		err := cmd.Run()
+		if err != nil {
+			fmt.Println("failed to remove zfs subvolume for pool 'docker-bundle'", err)
+		}
 	}
 }
 

@@ -1906,33 +1906,31 @@ func (s *DockerDaemonSuite) TestDaemonNoSpaceLeftOnDeviceError(c *check.C) {
 
 	imgSize := 2
 	storageDriver := os.Getenv("DOCKER_GRAPHDRIVER")
-	switch storageDriver {
-	case "btrfs", "zfs":
+	if storageDriver == "btrfs" {
 		imgSize = 64 // 64M minimun required
 	}
 
-	// create a testimage image and mount it as graph root
-	// Why in a container? Because `mount` sometimes behaves weirdly and often fails outright on this test in debian:jessie (which is what the test suite runs under if run from the Makefile)
-	dockerCmd(c, "run", "--rm", "-v", testDir+":/test", "busybox", "sh", "-c", fmt.Sprintf("dd of=/test/testfs.img bs=1M seek=%d count=0", imgSize))
+	if storageDriver != "zfs" {
+		// create a testimage image and mount it as graph root
+		// Why in a container? Because `mount` sometimes behaves weirdly and often fails outright on this test in debian:jessie (which is what the test suite runs under if run from the Makefile)
+		dockerCmd(c, "run", "--rm", "-v", testDir+":/test", "busybox", "sh", "-c", fmt.Sprintf("dd of=/test/testfs.img bs=1M seek=%d count=0", imgSize))
+	}
 
 	var cmd *exec.Cmd
 
-	cmd = exec.Command("ls", "-la", testDir)
-
-	{
-		out, _, _ := runCommandWithOutput(cmd) // fs maker commands are not in busybox
-		fmt.Printf("ls -la: %s\n", out)
-	}
 	switch storageDriver {
 	case "btrfs":
 		cmd = exec.Command("mkfs.btrfs", testImg)
 	case "zfs":
-		cmd = exec.Command("zpool", "create", "-m", filepath.Join(testDir, "test-mount"), "testfs-mount", testImg)
+		cmd = exec.Command("zfs", "create", "-o", fmt.Sprintf("mountpoint=%s", filepath.Join(testDir, "test-mount")), "-o", fmt.Sprintf("quota=%dM", imgSize), "docker-zfs/testfs-mount")
+		defer func() {
+			cmd := exec.Command("zfs", "destroy", "docker-zfs/testfs-mount")
+			cmd.Run()
+		}()
 	default:
 		storageDriver = "ext4"
 		cmd = exec.Command("mkfs.ext4", "-F", testImg)
 	}
-	fmt.Printf("%#v\n", cmd)
 	out, _, err := runCommandWithOutput(cmd) // fs maker commands are not in busybox
 	c.Assert(err, checker.IsNil, check.Commentf(out))
 
@@ -1947,7 +1945,11 @@ func (s *DockerDaemonSuite) TestDaemonNoSpaceLeftOnDeviceError(c *check.C) {
 	// pull a repository large enough to fill the mount point
 	pullOut, err := s.d.Cmd("pull", "registry:2")
 	c.Assert(err, checker.NotNil, check.Commentf(pullOut))
-	c.Assert(pullOut, checker.Contains, "no space left on device")
+	if storageDriver == "zfs" {
+		c.Assert(pullOut, checker.Contains, "disk quota exceeded")
+	} else {
+		c.Assert(pullOut, checker.Contains, "no space left on device")
+	}
 }
 
 // Test daemon restart with container links + auto restart
