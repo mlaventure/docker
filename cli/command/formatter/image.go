@@ -2,6 +2,7 @@ package formatter
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -24,6 +25,7 @@ const (
 type ImageContext struct {
 	Context
 	Digest bool
+	Sortby string
 }
 
 func isDangling(image types.Image) bool {
@@ -80,10 +82,14 @@ func ImageWrite(ctx ImageContext, images []types.Image) error {
 }
 
 func imageFormat(ctx ImageContext, images []types.Image, format func(subContext subContext) error) error {
+	imageSorter := &imageSorter{
+		imageCtxs: []*imageContext{},
+		by:        ctx.Sortby,
+	}
+
 	for _, image := range images {
-		images := []*imageContext{}
 		if isDangling(image) {
-			images = append(images, &imageContext{
+			imageSorter.imageCtxs = append(imageSorter.imageCtxs, &imageContext{
 				trunc:  ctx.Trunc,
 				i:      image,
 				repo:   "<none>",
@@ -126,7 +132,7 @@ func imageFormat(ctx ImageContext, images []types.Image, format func(subContext 
 
 				for _, tag := range tags {
 					if len(digests) == 0 {
-						images = append(images, &imageContext{
+						imageSorter.imageCtxs = append(imageSorter.imageCtxs, &imageContext{
 							trunc:  ctx.Trunc,
 							i:      image,
 							repo:   repo,
@@ -137,7 +143,7 @@ func imageFormat(ctx ImageContext, images []types.Image, format func(subContext 
 					}
 					// Display the digests for each tag
 					for _, dgst := range digests {
-						images = append(images, &imageContext{
+						imageSorter.imageCtxs = append(imageSorter.imageCtxs, &imageContext{
 							trunc:  ctx.Trunc,
 							i:      image,
 							repo:   repo,
@@ -154,7 +160,7 @@ func imageFormat(ctx ImageContext, images []types.Image, format func(subContext 
 				// If digests are displayed, show row per digest
 				if ctx.Digest {
 					for _, dgst := range digests {
-						images = append(images, &imageContext{
+						imageSorter.imageCtxs = append(imageSorter.imageCtxs, &imageContext{
 							trunc:  ctx.Trunc,
 							i:      image,
 							repo:   repo,
@@ -163,7 +169,7 @@ func imageFormat(ctx ImageContext, images []types.Image, format func(subContext 
 						})
 					}
 				} else {
-					images = append(images, &imageContext{
+					imageSorter.imageCtxs = append(imageSorter.imageCtxs, &imageContext{
 						trunc: ctx.Trunc,
 						i:     image,
 						repo:  repo,
@@ -172,10 +178,14 @@ func imageFormat(ctx ImageContext, images []types.Image, format func(subContext 
 				}
 			}
 		}
-		for _, imageCtx := range images {
-			if err := format(imageCtx); err != nil {
-				return err
-			}
+	}
+
+	// sort image contexts
+	sort.Sort(imageSorter)
+
+	for _, imageCtx := range imageSorter.imageCtxs {
+		if err := format(imageCtx); err != nil {
+			return err
 		}
 	}
 	return nil
