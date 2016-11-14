@@ -85,6 +85,7 @@ clone git github.com/ugorji/go f1f1a805ed361a0e078bb537e4ea78cd37dcf065
 clone git github.com/hashicorp/consul v0.5.2
 clone git github.com/boltdb/bolt fff57c100f4dea1905678da7e90d92429dff2904
 clone git github.com/miekg/dns 75e6e86cc601825c5dbcd4e0c209eab180997cd7
+clone git github.com/gogo/protobuf 43a2e0b1c32252bfbbdf81f7faa7a88fb3fa4028
 
 # get graph and distribution packages
 clone git github.com/docker/distribution 07f32ac1831ed0fc71960b7da5d6bb83cb6881b5
@@ -137,28 +138,6 @@ clone git github.com/docker/docker-credential-helpers v0.3.0
 
 # containerd
 clone git github.com/docker/containerd 0366d7e9693c930cf18c0f50cc16acec064e96c5
-
-# cluster
-clone git github.com/docker/swarmkit 938530a15c8a0374b367f2b94ddfd8e8b9b61bad
-clone git github.com/golang/mock bd3c8e81be01eef76d4b503f5e687d2d1354d2d9
-clone git github.com/gogo/protobuf 43a2e0b1c32252bfbbdf81f7faa7a88fb3fa4028
-clone git github.com/cloudflare/cfssl b895b0549c0ff676f92cf09ba971ae02bb41367b
-clone git github.com/google/certificate-transparency 025a5cab06f6a819c455d9fdc9e2a1b6d0982284
-clone git golang.org/x/crypto 3fbbcd23f1cb824e69491a5930cfeff09b12f4d2 https://github.com/golang/crypto.git
-clone git github.com/mreiferson/go-httpclient 63fe23f7434723dc904c901043af07931f293c47
-clone git github.com/hashicorp/go-memdb 98f52f52d7a476958fa9da671354d270c50661a7
-clone git github.com/hashicorp/go-immutable-radix 8e8ed81f8f0bf1bdd829593fdd5c29922c1ea990
-clone git github.com/hashicorp/golang-lru a0d98a5f288019575c6d1f4bb1573fef2d1fcdc4
-clone git github.com/coreos/pkg 2c77715c4df99b5420ffcae14ead08f52104065d
-clone git github.com/pivotal-golang/clock 3fd3c1944c59d9742e1cd333672181cd1a6f9fa0
-clone git github.com/prometheus/client_golang e51041b3fa41cece0dca035740ba6411905be473
-clone git github.com/beorn7/perks b965b613227fddccbfffe13eae360ed3fa822f8d
-clone git github.com/prometheus/client_model fa8ad6fec33561be4280a8f0514318c79d7f6cb6
-clone git github.com/prometheus/common ffe929a3f4c4faeaa10f2b9535c2b1be3ad15650
-clone git github.com/prometheus/procfs 454a56f35412459b5e684fd5ec0f9211b94f002a
-clone hg bitbucket.org/ww/goautoneg 75cd24fc2f2c2a2088577d12123ddee5f54e0675
-clone git github.com/matttproud/golang_protobuf_extensions fc2b8d3a73c4867e51861bbdd5ae3c1f0869dd6a
-clone git github.com/pkg/errors 01fa4104b9c248c8945d14d9f128454d5b28d595
 
 # cli
 clone git github.com/spf13/cobra 75205f23b3ea70dc7ae5e900d074e010c23c37e9 https://github.com/dnephin/cobra.git

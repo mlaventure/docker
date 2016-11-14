@@ -26,7 +26,6 @@ import (
 	cliflags "github.com/docker/docker/cli/flags"
 	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/daemon"
-	"github.com/docker/docker/daemon/cluster"
 	"github.com/docker/docker/daemon/logger"
 	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/libcontainerd"
@@ -266,19 +265,6 @@ func (cli *DaemonCli) start() (err error) {
 		return fmt.Errorf("Error starting daemon: %v", err)
 	}
 
-	name, _ := os.Hostname()
-
-	c, err := cluster.New(cluster.Config{
-		Root:                   cli.Config.Root,
-		Name:                   name,
-		Backend:                d,
-		NetworkSubnetsProvider: d,
-		DefaultAdvertiseAddr:   cli.Config.SwarmDefaultAdvertiseAddr,
-	})
-	if err != nil {
-		logrus.Fatalf("Error creating cluster component: %v", err)
-	}
-
 	logrus.Info("Daemon has completed initialization")
 
 	logrus.WithFields(logrus.Fields{
@@ -288,7 +274,7 @@ func (cli *DaemonCli) start() (err error) {
 	}).Info("Docker daemon")
 
 	cli.initMiddlewares(api, serverConfig)
-	initRouter(api, d, c)
+	initRouter(api, d)
 
 	cli.d = d
 	cli.setupConfigReloadTrap()
@@ -305,7 +291,6 @@ func (cli *DaemonCli) start() (err error) {
 	// Daemon is fully initialized and handling API traffic
 	// Wait for serve API to complete
 	errAPI := <-serveAPIWait
-	c.Cleanup()
 	shutdownDaemon(d, 15)
 	containerdRemote.Cleanup()
 	if errAPI != nil {
@@ -405,18 +390,18 @@ func loadDaemonCliConfig(config *daemon.Config, flags *flag.FlagSet, commonConfi
 	return config, nil
 }
 
-func initRouter(s *apiserver.Server, d *daemon.Daemon, c *cluster.Cluster) {
+func initRouter(s *apiserver.Server, d *daemon.Daemon) {
 	decoder := runconfig.ContainerDecoder{}
 
 	routers := []router.Router{
 		container.NewRouter(d, decoder),
 		image.NewRouter(d, decoder),
-		systemrouter.NewRouter(d, c),
+		systemrouter.NewRouter(d),
 		volume.NewRouter(d),
 		build.NewRouter(dockerfile.NewBuildManager(d)),
 	}
 	if d.NetworkControllerEnabled() {
-		routers = append(routers, network.NewRouter(d, c))
+		routers = append(routers, network.NewRouter(d))
 	}
 	routers = addExperimentalRouters(routers)
 
