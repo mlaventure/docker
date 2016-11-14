@@ -79,12 +79,6 @@ cross: build ## cross build the binaries for darwin, freebsd and\nwindows
 win: build ## cross build the binary for windows
 	$(DOCKER_RUN_DOCKER) hack/make.sh win
 
-tgz: build ## build the archives (.zip on windows and .tgz\notherwise) containing the binaries
-	$(DOCKER_RUN_DOCKER) hack/make.sh dynbinary binary cross tgz
-
-deb: build  ## build the deb packages
-	$(DOCKER_RUN_DOCKER) hack/make.sh dynbinary build-deb
-
 docs: ## build the docs
 	$(MAKE) -C docs docs
 
@@ -93,9 +87,6 @@ gccgo: build-gccgo ## build the gcc-go linux binaries
 
 install: ## install the linux binaries
 	KEEPBUNDLE=1 hack/make.sh install-binary
-
-rpm: build ## build the rpm packages
-	$(DOCKER_RUN_DOCKER) hack/make.sh dynbinary build-rpm
 
 shell: build ## start a shell inside the build env
 	$(DOCKER_RUN_DOCKER) bash
@@ -112,7 +103,7 @@ test-integration-cli: build ## run the integration tests
 test-unit: build ## run the unit tests
 	$(DOCKER_RUN_DOCKER) hack/make.sh test-unit
 
-validate: build ## validate DCO, Seccomp profile generation, gofmt,\n./pkg/ isolation, golint, tests, tomls, go vet and vendor 
+validate: build ## validate DCO, Seccomp profile generation, gofmt,\n./pkg/ isolation, golint, tests, tomls, go vet and vendor
 	$(DOCKER_RUN_DOCKER) hack/make.sh validate-dco validate-default-seccomp validate-gofmt validate-pkg validate-lint validate-test validate-toml validate-vet validate-vendor
 
 manpages: ## Generate man pages from go source and markdown
@@ -123,4 +114,3 @@ manpages: ## Generate man pages from go source and markdown
 
 help: ## this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {sub("\\\\n",sprintf("\n%22c"," "), $$2);printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
