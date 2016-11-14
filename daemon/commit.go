@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/backend"
-	"github.com/docker/docker/builder/dockerfile"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/image"
@@ -134,13 +133,8 @@ func (daemon *Daemon) Commit(name string, c *backend.ContainerCommitConfig) (str
 		defer daemon.containerUnpause(container)
 	}
 
-	newConfig, err := dockerfile.BuildFromConfig(c.Config, c.Changes)
-	if err != nil {
-		return "", err
-	}
-
 	if c.MergeConfigs {
-		if err := merge(newConfig, container.Config); err != nil {
+		if err := merge(c.Config, container.Config); err != nil {
 			return "", err
 		}
 	}
@@ -195,7 +189,7 @@ func (daemon *Daemon) Commit(name string, c *backend.ContainerCommitConfig) (str
 	config, err := json.Marshal(&image.Image{
 		V1Image: image.V1Image{
 			DockerVersion:   dockerversion.Version,
-			Config:          newConfig,
+			Config:          c.Config,
 			Architecture:    runtime.GOARCH,
 			OS:              runtime.GOOS,
 			Container:       container.ID,

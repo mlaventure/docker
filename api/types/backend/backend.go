@@ -72,7 +72,6 @@ type ExecProcessConfig struct {
 // transports configuration changes for a container.
 type ContainerCommitConfig struct {
 	types.ContainerCommitConfig
-	Changes []string
 }
 
 // ProgressWriter is an interface
