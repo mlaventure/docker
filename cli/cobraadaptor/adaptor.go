@@ -6,7 +6,6 @@ import (
 	"github.com/docker/docker/api/client/image"
 	"github.com/docker/docker/api/client/network"
 	"github.com/docker/docker/api/client/node"
-	"github.com/docker/docker/api/client/plugin"
 	"github.com/docker/docker/api/client/registry"
 	"github.com/docker/docker/api/client/service"
 	"github.com/docker/docker/api/client/stack"
@@ -86,7 +85,6 @@ func NewCobraAdaptor(clientFlags *cliflags.ClientFlags) CobraAdaptor {
 		system.NewVersionCommand(dockerCli),
 		volume.NewVolumeCommand(dockerCli),
 	)
-	plugin.NewPluginCommand(rootCmd, dockerCli)
 
 	rootCmd.PersistentFlags().BoolP("help", "h", false, "Print usage")
 	rootCmd.PersistentFlags().MarkShorthandDeprecated("help", "please use --help")

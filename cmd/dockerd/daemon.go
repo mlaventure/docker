@@ -26,7 +26,6 @@ import (
 	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/libcontainerd"
 	"github.com/docker/docker/opts"
-	"github.com/docker/docker/pkg/authorization"
 	"github.com/docker/docker/pkg/jsonlog"
 	"github.com/docker/docker/pkg/listeners"
 	flag "github.com/docker/docker/pkg/mflag"
@@ -412,10 +411,4 @@ func (cli *DaemonCli) initMiddlewares(s *apiserver.Server, cfg *apiserver.Config
 
 	u := middleware.NewUserAgentMiddleware(v)
 	s.UseMiddleware(u)
-
-	if len(cli.Config.AuthorizationPlugins) > 0 {
-		authZPlugins := authorization.NewPlugins(cli.Config.AuthorizationPlugins)
-		handleAuthorization := authorization.NewMiddleware(authZPlugins)
-		s.UseMiddleware(handleAuthorization)
-	}
 }

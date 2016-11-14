@@ -606,11 +606,6 @@ func NewDaemon(config *Config, registryService registry.Service, containerdRemot
 		return nil, err
 	}
 
-	// Plugin system initialization should happen before restore. Do not change order.
-	if err := pluginInit(d, config, containerdRemote); err != nil {
-		return nil, err
-	}
-
 	return d, nil
 }
 
@@ -658,8 +653,6 @@ func (daemon *Daemon) Shutdown() error {
 	daemon.shutdown = true
 	// Keep mounts and networking running on daemon shutdown if
 	// we are to keep containers running and restore them.
-
-	pluginShutdown()
 
 	if daemon.configStore.LiveRestore && daemon.containers != nil {
 		// check if there are any running containers, if none we should do some cleanup

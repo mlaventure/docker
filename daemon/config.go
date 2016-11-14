@@ -75,26 +75,25 @@ type CommonTLSOptions struct {
 // It includes json tags to deserialize configuration from a file
 // using the same names that the flags in the command line use.
 type CommonConfig struct {
-	AuthorizationPlugins []string            `json:"authorization-plugins,omitempty"` // AuthorizationPlugins holds list of authorization plugins
-	AutoRestart          bool                `json:"-"`
-	Context              map[string][]string `json:"-"`
-	DisableBridge        bool                `json:"-"`
-	DNS                  []string            `json:"dns,omitempty"`
-	DNSOptions           []string            `json:"dns-opts,omitempty"`
-	DNSSearch            []string            `json:"dns-search,omitempty"`
-	ExecOptions          []string            `json:"exec-opts,omitempty"`
-	GraphDriver          string              `json:"storage-driver,omitempty"`
-	GraphOptions         []string            `json:"storage-opts,omitempty"`
-	Labels               []string            `json:"labels,omitempty"`
-	Mtu                  int                 `json:"mtu,omitempty"`
-	Pidfile              string              `json:"pidfile,omitempty"`
-	RawLogs              bool                `json:"raw-logs,omitempty"`
-	Root                 string              `json:"graph,omitempty"`
-	SocketGroup          string              `json:"group,omitempty"`
-	TrustKeyPath         string              `json:"-"`
-	CorsHeaders          string              `json:"api-cors-header,omitempty"`
-	EnableCors           bool                `json:"api-enable-cors,omitempty"`
-	LiveRestore          bool                `json:"live-restore,omitempty"`
+	AutoRestart   bool                `json:"-"`
+	Context       map[string][]string `json:"-"`
+	DisableBridge bool                `json:"-"`
+	DNS           []string            `json:"dns,omitempty"`
+	DNSOptions    []string            `json:"dns-opts,omitempty"`
+	DNSSearch     []string            `json:"dns-search,omitempty"`
+	ExecOptions   []string            `json:"exec-opts,omitempty"`
+	GraphDriver   string              `json:"storage-driver,omitempty"`
+	GraphOptions  []string            `json:"storage-opts,omitempty"`
+	Labels        []string            `json:"labels,omitempty"`
+	Mtu           int                 `json:"mtu,omitempty"`
+	Pidfile       string              `json:"pidfile,omitempty"`
+	RawLogs       bool                `json:"raw-logs,omitempty"`
+	Root          string              `json:"graph,omitempty"`
+	SocketGroup   string              `json:"group,omitempty"`
+	TrustKeyPath  string              `json:"-"`
+	CorsHeaders   string              `json:"api-cors-header,omitempty"`
+	EnableCors    bool                `json:"api-enable-cors,omitempty"`
+	LiveRestore   bool                `json:"live-restore,omitempty"`
 
 	// ClusterStore is the storage backend used for the cluster information. It is used by both
 	// multihost networking (to store networks and endpoints information) and by the node discovery
@@ -152,7 +151,6 @@ func (config *Config) InstallCommonFlags(cmd *flag.FlagSet, usageFn func(string)
 	config.ServiceOptions.InstallCliFlags(cmd, usageFn)
 
 	cmd.Var(opts.NewNamedListOptsRef("storage-opts", &config.GraphOptions, nil), []string{"-storage-opt"}, usageFn("Storage driver options"))
-	cmd.Var(opts.NewNamedListOptsRef("authorization-plugins", &config.AuthorizationPlugins, nil), []string{"-authorization-plugin"}, usageFn("Authorization plugins to load"))
 	cmd.Var(opts.NewNamedListOptsRef("exec-opts", &config.ExecOptions, nil), []string{"-exec-opt"}, usageFn("Runtime execution options"))
 	cmd.StringVar(&config.Pidfile, []string{"p", "-pidfile"}, defaultPidFile, usageFn("Path to use for daemon PID file"))
 	cmd.StringVar(&config.Root, []string{"g", "-graph"}, defaultGraph, usageFn("Root of the Docker runtime"))
