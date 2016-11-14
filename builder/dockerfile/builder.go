@@ -101,7 +101,7 @@ func (bm *BuildManager) BuildFromContext(ctx context.Context, src io.ReadCloser,
 	if len(dockerfileName) > 0 {
 		buildOptions.Dockerfile = dockerfileName
 	}
-	b, err := NewBuilder(ctx, buildOptions, bm.backend, builder.DockerIgnoreContext{ModifiableContext: buildContext}, nil)
+	b, err := NewBuilder(ctx, buildOptions, bm.backend, buildContext, nil)
 	if err != nil {
 		return "", err
 	}

@@ -615,17 +615,6 @@ func (b *Builder) readDockerfile() error {
 		return err
 	}
 
-	// After the Dockerfile has been parsed, we need to check the .dockerignore
-	// file for either "Dockerfile" or ".dockerignore", and if either are
-	// present then erase them from the build context. These files should never
-	// have been sent from the client but we did send them to make sure that
-	// we had the Dockerfile to actually parse, and then we also need the
-	// .dockerignore file to know whether either file should be removed.
-	// Note that this assumes the Dockerfile has been read into memory and
-	// is now safe to be removed.
-	if dockerIgnore, ok := b.context.(builder.DockerIgnoreContext); ok {
-		dockerIgnore.Process([]string{b.options.Dockerfile})
-	}
 	return nil
 }
 
