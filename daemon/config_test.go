@@ -85,24 +85,6 @@ func TestParseClusterAdvertiseSettings(t *testing.T) {
 	}
 }
 
-func TestFindConfigurationConflicts(t *testing.T) {
-	config := map[string]interface{}{"authorization-plugins": "foobar"}
-	flags := mflag.NewFlagSet("test", mflag.ContinueOnError)
-
-	flags.String([]string{"-authorization-plugins"}, "", "")
-	if err := flags.Set("-authorization-plugins", "asdf"); err != nil {
-		t.Fatal(err)
-	}
-
-	err := findConfigurationConflicts(config, flags)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "authorization-plugins: (from flag: asdf, from file: foobar)") {
-		t.Fatalf("expected authorization-plugins conflict, got %v", err)
-	}
-}
-
 func TestFindConfigurationConflictsWithNamedOptions(t *testing.T) {
 	config := map[string]interface{}{"hosts": []string{"qwer"}}
 	flags := mflag.NewFlagSet("test", mflag.ContinueOnError)

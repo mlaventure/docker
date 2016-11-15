@@ -21,7 +21,6 @@ Options:
 
       --add-runtime=[]                       Register an additional OCI compatible runtime
       --api-cors-header                      Set CORS headers in the remote API
-      --authorization-plugin=[]              Authorization plugins to load
       -b, --bridge                           Attach containers to a network bridge
       --bip                                  Specify network bridge IP
       --cgroup-parent                        Set parent cgroup for all containers
@@ -861,31 +860,6 @@ The currently supported cluster store options are:
 
     Specifies the path in the Key/Value store. If not configured, the default value is 'docker/nodes'.
 
-## Access authorization
-
-Docker's access authorization can be extended by authorization plugins that your
-organization can purchase or build themselves. You can install one or more
-authorization plugins when you start the Docker `daemon` using the
-`--authorization-plugin=PLUGIN_ID` option.
-
-```bash
-$ sudo dockerd --authorization-plugin=plugin1 --authorization-plugin=plugin2,...
-```
-
-The `PLUGIN_ID` value is either the plugin's name or a path to its specification
-file. The plugin's implementation determines whether you can specify a name or
-path. Consult with your Docker administrator to get information about the
-plugins available to you.
-
-Once a plugin is installed, requests made to the `daemon` through the command
-line or Docker's remote API are allowed or denied by the plugin.  If you have
-multiple plugins installed, at least one must allow the request for it to
-complete.
-
-For information about how to create an authorization plugin, see [authorization
-plugin](../../extend/plugins_authorization.md) section in the Docker extend section of this documentation.
-
-
 ## Daemon user namespace options
 
 The Linux kernel [user namespace support](http://man7.org/linux/man-pages/man7/user_namespaces.7.html) provides additional security by enabling
@@ -1089,7 +1063,6 @@ This is a full example of the allowed configuration options on Linux:
 
 ```json
 {
-	"authorization-plugins": [],
 	"dns": [],
 	"dns-opts": [],
 	"dns-search": [],
@@ -1167,7 +1140,6 @@ This is a full example of the allowed configuration options on Windows:
 
 ```json
 {
-    "authorization-plugins": [],
     "dns": [],
     "dns-opts": [],
     "dns-search": [],

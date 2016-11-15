@@ -53,7 +53,6 @@ import (
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/discovery"
 	"github.com/docker/docker/pkg/locker"
-	"github.com/docker/docker/pkg/plugins"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/libnetwork/cluster"
 	"github.com/docker/libnetwork/config"
@@ -1059,26 +1058,11 @@ func SandboxKeyWalker(out *Sandbox, key string) SandboxWalker {
 }
 
 func (c *controller) loadDriver(networkType string) error {
-	// Plugins pkg performs lazy loading of plugins that acts as remote drivers.
-	// As per the design, this Get call will result in remote driver discovery if there is a corresponding plugin available.
-	_, err := plugins.Get(networkType, driverapi.NetworkPluginEndpointType)
-	if err != nil {
-		if err == plugins.ErrNotFound {
-			return types.NotFoundErrorf(err.Error())
-		}
-		return err
-	}
-
-	return nil
+	return types.NotFoundErrorf("network driver %s not found", networkType)
 }
 
 func (c *controller) loadIPAMDriver(name string) error {
-	if _, err := plugins.Get(name, ipamapi.PluginEndpointType); err != nil {
-		if err == plugins.ErrNotFound {
-			return types.NotFoundErrorf(err.Error())
-		}
-		return err
-	}
+	return types.NotFoundErrorf("IPAM driver %s not found", name)
 
 	return nil
 }
