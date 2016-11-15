@@ -26,7 +26,6 @@ import (
 	"github.com/docker/docker/pkg/httputils"
 	"github.com/docker/docker/pkg/integration"
 	"github.com/docker/docker/pkg/ioutils"
-	"github.com/docker/docker/pkg/stringutils"
 	"github.com/docker/engine-api/types"
 	"github.com/docker/go-connections/tlsconfig"
 	"github.com/docker/go-units"
@@ -657,36 +656,6 @@ type FakeStorage interface {
 	CtxDir() string
 }
 
-func fakeBinaryStorage(archives map[string]*bytes.Buffer) (FakeStorage, error) {
-	ctx, err := fakeContextFromNewTempDir()
-	if err != nil {
-		return nil, err
-	}
-	for name, content := range archives {
-		if err := ctx.addFile(name, content.Bytes()); err != nil {
-			return nil, err
-		}
-	}
-	return fakeStorageWithContext(ctx)
-}
-
-// fakeStorage returns either a local or remote (at daemon machine) file server
-func fakeStorage(files map[string]string) (FakeStorage, error) {
-	ctx, err := fakeContextWithFiles(files)
-	if err != nil {
-		return nil, err
-	}
-	return fakeStorageWithContext(ctx)
-}
-
-// fakeStorageWithContext returns either a local or remote (at daemon machine) file server
-func fakeStorageWithContext(ctx *FakeContext) (FakeStorage, error) {
-	if isLocalDaemon {
-		return newLocalFakeStorage(ctx)
-	}
-	return newRemoteFileServer(ctx)
-}
-
 // localFileStorage is a file storage on the running machine
 type localFileStorage struct {
 	*FakeContext
@@ -748,56 +717,6 @@ func (f *remoteFileServer) Close() error {
 		return nil
 	}
 	return deleteContainer(f.container)
-}
-
-func newRemoteFileServer(ctx *FakeContext) (*remoteFileServer, error) {
-	var (
-		image     = fmt.Sprintf("fileserver-img-%s", strings.ToLower(stringutils.GenerateRandomAlphaOnlyString(10)))
-		container = fmt.Sprintf("fileserver-cnt-%s", strings.ToLower(stringutils.GenerateRandomAlphaOnlyString(10)))
-	)
-
-	// Build the image
-	if err := fakeContextAddDockerfile(ctx, `FROM httpserver
-COPY . /static`); err != nil {
-		return nil, fmt.Errorf("Cannot add Dockerfile to context: %v", err)
-	}
-	if _, err := buildImageFromContext(image, ctx, false); err != nil {
-		return nil, fmt.Errorf("failed building file storage container image: %v", err)
-	}
-
-	// Start the container
-	runCmd := exec.Command(dockerBinary, "run", "-d", "-P", "--name", container, image)
-	if out, ec, err := runCommandWithOutput(runCmd); err != nil {
-		return nil, fmt.Errorf("failed to start file storage container. ec=%v\nout=%s\nerr=%v", ec, out, err)
-	}
-
-	// Find out the system assigned port
-	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "port", container, "80/tcp"))
-	if err != nil {
-		return nil, fmt.Errorf("failed to find container port: err=%v\nout=%s", err, out)
-	}
-
-	fileserverHostPort := strings.Trim(out, "\n")
-	_, port, err := net.SplitHostPort(fileserverHostPort)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse file server host:port: %v", err)
-	}
-
-	dockerHostURL, err := url.Parse(daemonHost())
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse daemon host URL: %v", err)
-	}
-
-	host, _, err := net.SplitHostPort(dockerHostURL.Host)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse docker daemon host:port: %v", err)
-	}
-
-	return &remoteFileServer{
-		container: container,
-		image:     image,
-		host:      fmt.Sprintf("%s:%s", host, port),
-		ctx:       ctx}, nil
 }
 
 func inspectFieldAndMarshall(c *check.C, name, field string, output interface{}) {
@@ -935,141 +854,6 @@ func getContainerState(c *check.C, id string) (int, bool, error) {
 	return exitStatus, running, nil
 }
 
-func buildImageCmd(name, dockerfile string, useCache bool, buildFlags ...string) *exec.Cmd {
-	return buildImageCmdWithHost(name, dockerfile, "", useCache, buildFlags...)
-}
-
-func buildImageCmdWithHost(name, dockerfile, host string, useCache bool, buildFlags ...string) *exec.Cmd {
-	args := []string{}
-	if host != "" {
-		args = append(args, "--host", host)
-	}
-	args = append(args, "build", "-t", name)
-	if !useCache {
-		args = append(args, "--no-cache")
-	}
-	args = append(args, buildFlags...)
-	args = append(args, "-")
-	buildCmd := exec.Command(dockerBinary, args...)
-	buildCmd.Stdin = strings.NewReader(dockerfile)
-	return buildCmd
-}
-
-func buildImageWithOut(name, dockerfile string, useCache bool, buildFlags ...string) (string, string, error) {
-	buildCmd := buildImageCmd(name, dockerfile, useCache, buildFlags...)
-	out, exitCode, err := runCommandWithOutput(buildCmd)
-	if err != nil || exitCode != 0 {
-		return "", out, fmt.Errorf("failed to build the image: %s", out)
-	}
-	id, err := getIDByName(name)
-	if err != nil {
-		return "", out, err
-	}
-	return id, out, nil
-}
-
-func buildImageWithStdoutStderr(name, dockerfile string, useCache bool, buildFlags ...string) (string, string, string, error) {
-	buildCmd := buildImageCmd(name, dockerfile, useCache, buildFlags...)
-	stdout, stderr, exitCode, err := runCommandWithStdoutStderr(buildCmd)
-	if err != nil || exitCode != 0 {
-		return "", stdout, stderr, fmt.Errorf("failed to build the image: %s", stdout)
-	}
-	id, err := getIDByName(name)
-	if err != nil {
-		return "", stdout, stderr, err
-	}
-	return id, stdout, stderr, nil
-}
-
-func buildImage(name, dockerfile string, useCache bool, buildFlags ...string) (string, error) {
-	id, _, err := buildImageWithOut(name, dockerfile, useCache, buildFlags...)
-	return id, err
-}
-
-func buildImageFromContext(name string, ctx *FakeContext, useCache bool, buildFlags ...string) (string, error) {
-	id, _, err := buildImageFromContextWithOut(name, ctx, useCache, buildFlags...)
-	if err != nil {
-		return "", err
-	}
-	return id, nil
-}
-
-func buildImageFromContextWithOut(name string, ctx *FakeContext, useCache bool, buildFlags ...string) (string, string, error) {
-	args := []string{"build", "-t", name}
-	if !useCache {
-		args = append(args, "--no-cache")
-	}
-	args = append(args, buildFlags...)
-	args = append(args, ".")
-	buildCmd := exec.Command(dockerBinary, args...)
-	buildCmd.Dir = ctx.Dir
-	out, exitCode, err := runCommandWithOutput(buildCmd)
-	if err != nil || exitCode != 0 {
-		return "", "", fmt.Errorf("failed to build the image: %s", out)
-	}
-	id, err := getIDByName(name)
-	if err != nil {
-		return "", "", err
-	}
-	return id, out, nil
-}
-
-func buildImageFromContextWithStdoutStderr(name string, ctx *FakeContext, useCache bool, buildFlags ...string) (string, string, string, error) {
-	args := []string{"build", "-t", name}
-	if !useCache {
-		args = append(args, "--no-cache")
-	}
-	args = append(args, buildFlags...)
-	args = append(args, ".")
-	buildCmd := exec.Command(dockerBinary, args...)
-	buildCmd.Dir = ctx.Dir
-
-	stdout, stderr, exitCode, err := runCommandWithStdoutStderr(buildCmd)
-	if err != nil || exitCode != 0 {
-		return "", stdout, stderr, fmt.Errorf("failed to build the image: %s", stdout)
-	}
-	id, err := getIDByName(name)
-	if err != nil {
-		return "", stdout, stderr, err
-	}
-	return id, stdout, stderr, nil
-}
-
-func buildImageFromGitWithStdoutStderr(name string, ctx *fakeGit, useCache bool, buildFlags ...string) (string, string, string, error) {
-	args := []string{"build", "-t", name}
-	if !useCache {
-		args = append(args, "--no-cache")
-	}
-	args = append(args, buildFlags...)
-	args = append(args, ctx.RepoURL)
-	buildCmd := exec.Command(dockerBinary, args...)
-
-	stdout, stderr, exitCode, err := runCommandWithStdoutStderr(buildCmd)
-	if err != nil || exitCode != 0 {
-		return "", stdout, stderr, fmt.Errorf("failed to build the image: %s", stdout)
-	}
-	id, err := getIDByName(name)
-	if err != nil {
-		return "", stdout, stderr, err
-	}
-	return id, stdout, stderr, nil
-}
-
-func buildImageFromPath(name, path string, useCache bool, buildFlags ...string) (string, error) {
-	args := []string{"build", "-t", name}
-	if !useCache {
-		args = append(args, "--no-cache")
-	}
-	args = append(args, buildFlags...)
-	args = append(args, path)
-	buildCmd := exec.Command(dockerBinary, args...)
-	out, exitCode, err := runCommandWithOutput(buildCmd)
-	if err != nil || exitCode != 0 {
-		return "", fmt.Errorf("failed to build the image: %s", out)
-	}
-	return getIDByName(name)
-}
-
 type gitServer interface {
 	URL() string
 	Close() error
@@ -1156,17 +940,9 @@ func newFakeGit(name string, files map[string]string, enforceLocalServer bool) (
 	}
 
 	var server gitServer
-	if !enforceLocalServer {
-		// use fakeStorage server, which might be local or remote (at test daemon)
-		server, err = fakeStorageWithContext(fakeContextFromDir(root))
-		if err != nil {
-			return nil, fmt.Errorf("cannot start fake storage: %v", err)
-		}
-	} else {
-		// always start a local http server on CLI test machine
-		httpServer := httptest.NewServer(http.FileServer(http.Dir(root)))
-		server = &localGitServer{httpServer}
-	}
+	// always start a local http server on CLI test machine
+	httpServer := httptest.NewServer(http.FileServer(http.Dir(root)))
+	server = &localGitServer{httpServer}
 	return &fakeGit{
 		root:    root,
 		server:  server,
@@ -1330,28 +1106,6 @@ func createTmpFile(c *check.C, content string) string {
 	c.Assert(err, check.IsNil)
 
 	return filename
-}
-
-func buildImageWithOutInDamon(socket string, name, dockerfile string, useCache bool) (string, error) {
-	args := []string{"--host", socket}
-	buildCmd := buildImageCmdArgs(args, name, dockerfile, useCache)
-	out, exitCode, err := runCommandWithOutput(buildCmd)
-	if err != nil || exitCode != 0 {
-		return out, fmt.Errorf("failed to build the image: %s, error: %v", out, err)
-	}
-	return out, nil
-}
-
-func buildImageCmdArgs(args []string, name, dockerfile string, useCache bool) *exec.Cmd {
-	args = append(args, []string{"-D", "build", "-t", name}...)
-	if !useCache {
-		args = append(args, "--no-cache")
-	}
-	args = append(args, "-")
-	buildCmd := exec.Command(dockerBinary, args...)
-	buildCmd.Stdin = strings.NewReader(dockerfile)
-	return buildCmd
-
 }
 
 func waitForContainer(contID string, args ...string) error {

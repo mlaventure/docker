@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -144,22 +143,6 @@ func (s *DockerSuite) TestRmiImgIDForce(c *check.C) {
 	}
 }
 
-// See https://github.com/docker/docker/issues/14116
-func (s *DockerSuite) TestRmiImageIDForceWithRunningContainersAndMultipleTags(c *check.C) {
-	dockerfile := "FROM busybox\nRUN echo test 14116\n"
-	imgID, err := buildImage("test-14116", dockerfile, false)
-	c.Assert(err, checker.IsNil)
-
-	newTag := "newtag"
-	dockerCmd(c, "tag", imgID, newTag)
-	runSleepingContainerInImage(c, imgID)
-
-	out, _, err := dockerCmdWithError("rmi", "-f", imgID)
-	// rmi -f should not delete image with running containers
-	c.Assert(err, checker.NotNil)
-	c.Assert(out, checker.Contains, "(cannot be forced) - image is being used by running container")
-}
-
 func (s *DockerSuite) TestRmiTagWithExistingContainers(c *check.C) {
 	container := "test-delete-tag"
 	newtag := "busybox:newtag"
@@ -170,21 +153,6 @@ func (s *DockerSuite) TestRmiTagWithExistingContainers(c *check.C) {
 
 	out, _ := dockerCmd(c, "rmi", newtag)
 	c.Assert(strings.Count(out, "Untagged: "), checker.Equals, 1)
-}
-
-func (s *DockerSuite) TestRmiForceWithExistingContainers(c *check.C) {
-	image := "busybox-clone"
-
-	cmd := exec.Command(dockerBinary, "build", "--no-cache", "-t", image, "-")
-	cmd.Stdin = strings.NewReader(`FROM busybox
-MAINTAINER foo`)
-
-	out, _, err := runCommandWithOutput(cmd)
-	c.Assert(err, checker.IsNil, check.Commentf("Could not build %s: %s", image, out))
-
-	dockerCmd(c, "run", "--name", "test-force-rmi", image, "/bin/true")
-
-	dockerCmd(c, "rmi", "-f", image)
 }
 
 func (s *DockerSuite) TestRmiWithMultipleRepositories(c *check.C) {
@@ -201,30 +169,6 @@ func (s *DockerSuite) TestRmiWithMultipleRepositories(c *check.C) {
 	c.Assert(out, checker.Contains, "Untagged: "+newTag)
 }
 
-func (s *DockerSuite) TestRmiForceWithMultipleRepositories(c *check.C) {
-	imageName := "rmiimage"
-	tag1 := imageName + ":tag1"
-	tag2 := imageName + ":tag2"
-
-	_, err := buildImage(tag1,
-		`FROM busybox
-		MAINTAINER "docker"`,
-		true)
-	if err != nil {
-		c.Fatal(err)
-	}
-
-	dockerCmd(c, "tag", tag1, tag2)
-
-	out, _ := dockerCmd(c, "rmi", "-f", tag2)
-	c.Assert(out, checker.Contains, "Untagged: "+tag2)
-	c.Assert(out, checker.Not(checker.Contains), "Untagged: "+tag1)
-
-	// Check built image still exists
-	images, _ := dockerCmd(c, "images", "-a")
-	c.Assert(images, checker.Contains, imageName, check.Commentf("Built image missing %q; Images: %q", imageName, images))
-}
-
 func (s *DockerSuite) TestRmiBlank(c *check.C) {
 	out, _, err := dockerCmdWithError("rmi", " ")
 	// Should have failed to delete ' ' image
@@ -233,78 +177,6 @@ func (s *DockerSuite) TestRmiBlank(c *check.C) {
 	c.Assert(out, checker.Not(checker.Contains), "no such id", check.Commentf("out: %s", out))
 	// Expected error message not generated
 	c.Assert(out, checker.Contains, "image name cannot be blank", check.Commentf("out: %s", out))
-}
-
-func (s *DockerSuite) TestRmiContainerImageNotFound(c *check.C) {
-	// Build 2 images for testing.
-	imageNames := []string{"test1", "test2"}
-	imageIds := make([]string, 2)
-	for i, name := range imageNames {
-		dockerfile := fmt.Sprintf("FROM busybox\nMAINTAINER %s\nRUN echo %s\n", name, name)
-		id, err := buildImage(name, dockerfile, false)
-		c.Assert(err, checker.IsNil)
-		imageIds[i] = id
-	}
-
-	// Create a long-running container.
-	runSleepingContainerInImage(c, imageNames[0])
-
-	// Create a stopped container, and then force remove its image.
-	dockerCmd(c, "run", imageNames[1], "true")
-	dockerCmd(c, "rmi", "-f", imageIds[1])
-
-	// Try to remove the image of the running container and see if it fails as expected.
-	out, _, err := dockerCmdWithError("rmi", "-f", imageIds[0])
-	// The image of the running container should not be removed.
-	c.Assert(err, checker.NotNil)
-	c.Assert(out, checker.Contains, "image is being used by running container", check.Commentf("out: %s", out))
-}
-
-// #13422
-func (s *DockerSuite) TestRmiUntagHistoryLayer(c *check.C) {
-	image := "tmp1"
-	// Build an image for testing.
-	dockerfile := `FROM busybox
-MAINTAINER foo
-RUN echo 0 #layer0
-RUN echo 1 #layer1
-RUN echo 2 #layer2
-`
-	_, err := buildImage(image, dockerfile, false)
-	c.Assert(err, checker.IsNil)
-
-	out, _ := dockerCmd(c, "history", "-q", image)
-	ids := strings.Split(out, "\n")
-	idToTag := ids[2]
-
-	// Tag layer0 to "tmp2".
-	newTag := "tmp2"
-	dockerCmd(c, "tag", idToTag, newTag)
-	// Create a container based on "tmp1".
-	dockerCmd(c, "run", "-d", image, "true")
-
-	// See if the "tmp2" can be untagged.
-	out, _ = dockerCmd(c, "rmi", newTag)
-	// Expected 1 untagged entry
-	c.Assert(strings.Count(out, "Untagged: "), checker.Equals, 1, check.Commentf("out: %s", out))
-
-	// Now let's add the tag again and create a container based on it.
-	dockerCmd(c, "tag", idToTag, newTag)
-	out, _ = dockerCmd(c, "run", "-d", newTag, "true")
-	cid := strings.TrimSpace(out)
-
-	// At this point we have 2 containers, one based on layer2 and another based on layer0.
-	// Try to untag "tmp2" without the -f flag.
-	out, _, err = dockerCmdWithError("rmi", newTag)
-	// should not be untagged without the -f flag
-	c.Assert(err, checker.NotNil)
-	c.Assert(out, checker.Contains, cid[:12])
-	c.Assert(out, checker.Contains, "(must force)")
-
-	// Add the -f flag and test again.
-	out, _ = dockerCmd(c, "rmi", "-f", newTag)
-	// should be allowed to untag with the -f flag
-	c.Assert(out, checker.Contains, fmt.Sprintf("Untagged: %s:latest", newTag))
 }
 
 func (*DockerSuite) TestRmiParentImageFail(c *check.C) {

@@ -1782,30 +1782,6 @@ func (s *DockerDaemonSuite) TestDaemonRestartWithPausedContainer(c *check.C) {
 	}
 }
 
-func (s *DockerDaemonSuite) TestDaemonRestartRmVolumeInUse(c *check.C) {
-	c.Assert(s.d.StartWithBusybox(), check.IsNil)
-
-	out, err := s.d.Cmd("create", "-v", "test:/foo", "busybox")
-	c.Assert(err, check.IsNil, check.Commentf(out))
-
-	c.Assert(s.d.Restart(), check.IsNil)
-
-	out, err = s.d.Cmd("volume", "rm", "test")
-	c.Assert(err, check.NotNil, check.Commentf("should not be able to remove in use volume after daemon restart"))
-	c.Assert(out, checker.Contains, "in use")
-}
-
-func (s *DockerDaemonSuite) TestDaemonRestartLocalVolumes(c *check.C) {
-	c.Assert(s.d.Start(), check.IsNil)
-
-	_, err := s.d.Cmd("volume", "create", "--name", "test")
-	c.Assert(err, check.IsNil)
-	c.Assert(s.d.Restart(), check.IsNil)
-
-	_, err = s.d.Cmd("volume", "inspect", "test")
-	c.Assert(err, check.IsNil)
-}
-
 func (s *DockerDaemonSuite) TestDaemonCorruptedLogDriverAddress(c *check.C) {
 	c.Assert(s.d.Start("--log-driver=syslog", "--log-opt", "syslog-address=corrupted:42"), check.NotNil)
 	expected := "Failed to set log opts: syslog-address should be in form proto://address"
@@ -2488,18 +2464,6 @@ func (s *DockerDaemonSuite) TestDaemonMaxConcurrencyWithConfigFileReload(c *chec
 	content, _ = ioutil.ReadFile(s.d.logFile.Name())
 	c.Assert(string(content), checker.Contains, expectedMaxConcurrentUploads)
 	c.Assert(string(content), checker.Contains, expectedMaxConcurrentDownloads)
-}
-
-func (s *DockerDaemonSuite) TestBuildOnDisabledBridgeNetworkDaemon(c *check.C) {
-	err := s.d.StartWithBusybox("-b=none", "--iptables=false")
-	c.Assert(err, check.IsNil)
-	s.d.c.Logf("dockerBinary %s", dockerBinary)
-	out, code, err := s.d.buildImageWithOut("busyboxs",
-		`FROM busybox
-                RUN cat /etc/hosts`, false)
-	comment := check.Commentf("Failed to build image. output %s, exitCode %d, err %v", out, code, err)
-	c.Assert(err, check.IsNil, comment)
-	c.Assert(code, check.Equals, 0, comment)
 }
 
 // Test case for #21976

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/docker/docker/pkg/integration/checker"
-	"github.com/docker/docker/pkg/stringid"
 	"github.com/go-check/check"
 )
 
@@ -250,93 +249,6 @@ func (s *DockerSuite) TestPsListContainersFilterName(c *check.C) {
 	out, _ := dockerCmd(c, "ps", "-a", "-q", "--filter=name=a_name_to_match")
 	containerOut := strings.TrimSpace(out)
 	c.Assert(containerOut, checker.Equals, id[:12], check.Commentf("Expected id %s, got %s for exited filter, output: %q", id[:12], containerOut, out))
-}
-
-// Test for the ancestor filter for ps.
-// There is also the same test but with image:tag@digest in docker_cli_by_digest_test.go
-//
-// What the test setups :
-// - Create 2 image based on busybox using the same repository but different tags
-// - Create an image based on the previous image (images_ps_filter_test2)
-// - Run containers for each of those image (busybox, images_ps_filter_test1, images_ps_filter_test2)
-// - Filter them out :P
-func (s *DockerSuite) TestPsListContainersFilterAncestorImage(c *check.C) {
-	// Build images
-	imageName1 := "images_ps_filter_test1"
-	imageID1, err := buildImage(imageName1,
-		`FROM busybox
-		 LABEL match me 1`, true)
-	c.Assert(err, checker.IsNil)
-
-	imageName1Tagged := "images_ps_filter_test1:tag"
-	imageID1Tagged, err := buildImage(imageName1Tagged,
-		`FROM busybox
-		 LABEL match me 1 tagged`, true)
-	c.Assert(err, checker.IsNil)
-
-	imageName2 := "images_ps_filter_test2"
-	imageID2, err := buildImage(imageName2,
-		fmt.Sprintf(`FROM %s
-		 LABEL match me 2`, imageName1), true)
-	c.Assert(err, checker.IsNil)
-
-	// start containers
-	dockerCmd(c, "run", "--name=first", "busybox", "echo", "hello")
-	firstID, err := getIDByName("first")
-	c.Assert(err, check.IsNil)
-
-	// start another container
-	dockerCmd(c, "run", "--name=second", "busybox", "echo", "hello")
-	secondID, err := getIDByName("second")
-	c.Assert(err, check.IsNil)
-
-	// start third container
-	dockerCmd(c, "run", "--name=third", imageName1, "echo", "hello")
-	thirdID, err := getIDByName("third")
-	c.Assert(err, check.IsNil)
-
-	// start fourth container
-	dockerCmd(c, "run", "--name=fourth", imageName1Tagged, "echo", "hello")
-	fourthID, err := getIDByName("fourth")
-	c.Assert(err, check.IsNil)
-
-	// start fifth container
-	dockerCmd(c, "run", "--name=fifth", imageName2, "echo", "hello")
-	fifthID, err := getIDByName("fifth")
-	c.Assert(err, check.IsNil)
-
-	var filterTestSuite = []struct {
-		filterName  string
-		expectedIDs []string
-	}{
-		// non existent stuff
-		{"nonexistent", []string{}},
-		{"nonexistent:tag", []string{}},
-		// image
-		{"busybox", []string{firstID, secondID, thirdID, fourthID, fifthID}},
-		{imageName1, []string{thirdID, fifthID}},
-		{imageName2, []string{fifthID}},
-		// image:tag
-		{fmt.Sprintf("%s:latest", imageName1), []string{thirdID, fifthID}},
-		{imageName1Tagged, []string{fourthID}},
-		// short-id
-		{stringid.TruncateID(imageID1), []string{thirdID, fifthID}},
-		{stringid.TruncateID(imageID2), []string{fifthID}},
-		// full-id
-		{imageID1, []string{thirdID, fifthID}},
-		{imageID1Tagged, []string{fourthID}},
-		{imageID2, []string{fifthID}},
-	}
-
-	var out string
-	for _, filter := range filterTestSuite {
-		out, _ = dockerCmd(c, "ps", "-a", "-q", "--no-trunc", "--filter=ancestor="+filter.filterName)
-		checkPsAncestorFilterOutput(c, out, filter.filterName, filter.expectedIDs)
-	}
-
-	// Multiple ancestor filter
-	out, _ = dockerCmd(c, "ps", "-a", "-q", "--no-trunc", "--filter=ancestor="+imageName2, "--filter=ancestor="+imageName1Tagged)
-	checkPsAncestorFilterOutput(c, out, imageName2+","+imageName1Tagged, []string{fourthID, fifthID})
 }
 
 func checkPsAncestorFilterOutput(c *check.C, out string, filterName string, expectedIDs []string) {
@@ -695,99 +607,6 @@ func (s *DockerSuite) TestPsNotShowPortsOfStoppedContainer(c *check.C) {
 	c.Assert(fields[len(fields)-2], checker.Not(checker.Equals), expected, check.Commentf("Should not got %v", expected))
 }
 
-func (s *DockerSuite) TestPsShowMounts(c *check.C) {
-	prefix, slash := getPrefixAndSlashFromDaemonPlatform()
-
-	mp := prefix + slash + "test"
-
-	dockerCmd(c, "volume", "create", "--name", "ps-volume-test")
-	// volume mount containers
-	runSleepingContainer(c, "--name=volume-test-1", "--volume", "ps-volume-test:"+mp)
-	c.Assert(waitRun("volume-test-1"), checker.IsNil)
-	runSleepingContainer(c, "--name=volume-test-2", "--volume", mp)
-	c.Assert(waitRun("volume-test-2"), checker.IsNil)
-	// bind mount container
-	var bindMountSource string
-	var bindMountDestination string
-	if DaemonIsWindows.Condition() {
-		bindMountSource = "c:\\"
-		bindMountDestination = "c:\\t"
-	} else {
-		bindMountSource = "/tmp"
-		bindMountDestination = "/t"
-	}
-	runSleepingContainer(c, "--name=bind-mount-test", "-v", bindMountSource+":"+bindMountDestination)
-	c.Assert(waitRun("bind-mount-test"), checker.IsNil)
-
-	out, _ := dockerCmd(c, "ps", "--format", "{{.Names}} {{.Mounts}}")
-
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	c.Assert(lines, checker.HasLen, 3)
-
-	fields := strings.Fields(lines[0])
-	c.Assert(fields, checker.HasLen, 2)
-	c.Assert(fields[0], checker.Equals, "bind-mount-test")
-	c.Assert(fields[1], checker.Equals, bindMountSource)
-
-	fields = strings.Fields(lines[1])
-	c.Assert(fields, checker.HasLen, 2)
-
-	annonymounsVolumeID := fields[1]
-
-	fields = strings.Fields(lines[2])
-	c.Assert(fields[1], checker.Equals, "ps-volume-test")
-
-	// filter by volume name
-	out, _ = dockerCmd(c, "ps", "--format", "{{.Names}} {{.Mounts}}", "--filter", "volume=ps-volume-test")
-
-	lines = strings.Split(strings.TrimSpace(string(out)), "\n")
-	c.Assert(lines, checker.HasLen, 1)
-
-	fields = strings.Fields(lines[0])
-	c.Assert(fields[1], checker.Equals, "ps-volume-test")
-
-	// empty results filtering by unknown volume
-	out, _ = dockerCmd(c, "ps", "--format", "{{.Names}} {{.Mounts}}", "--filter", "volume=this-volume-should-not-exist")
-	c.Assert(strings.TrimSpace(string(out)), checker.HasLen, 0)
-
-	// filter by mount destination
-	out, _ = dockerCmd(c, "ps", "--format", "{{.Names}} {{.Mounts}}", "--filter", "volume="+mp)
-
-	lines = strings.Split(strings.TrimSpace(string(out)), "\n")
-	c.Assert(lines, checker.HasLen, 2)
-
-	fields = strings.Fields(lines[0])
-	c.Assert(fields[1], checker.Equals, annonymounsVolumeID)
-	fields = strings.Fields(lines[1])
-	c.Assert(fields[1], checker.Equals, "ps-volume-test")
-
-	// filter by bind mount source
-	out, _ = dockerCmd(c, "ps", "--format", "{{.Names}} {{.Mounts}}", "--filter", "volume="+bindMountSource)
-
-	lines = strings.Split(strings.TrimSpace(string(out)), "\n")
-	c.Assert(lines, checker.HasLen, 1)
-
-	fields = strings.Fields(lines[0])
-	c.Assert(fields, checker.HasLen, 2)
-	c.Assert(fields[0], checker.Equals, "bind-mount-test")
-	c.Assert(fields[1], checker.Equals, bindMountSource)
-
-	// filter by bind mount destination
-	out, _ = dockerCmd(c, "ps", "--format", "{{.Names}} {{.Mounts}}", "--filter", "volume="+bindMountDestination)
-
-	lines = strings.Split(strings.TrimSpace(string(out)), "\n")
-	c.Assert(lines, checker.HasLen, 1)
-
-	fields = strings.Fields(lines[0])
-	c.Assert(fields, checker.HasLen, 2)
-	c.Assert(fields[0], checker.Equals, "bind-mount-test")
-	c.Assert(fields[1], checker.Equals, bindMountSource)
-
-	// empty results filtering by unknown mount point
-	out, _ = dockerCmd(c, "ps", "--format", "{{.Names}} {{.Mounts}}", "--filter", "volume="+prefix+slash+"this-path-was-never-mounted")
-	c.Assert(strings.TrimSpace(string(out)), checker.HasLen, 0)
-}
-
 func (s *DockerSuite) TestPsFormatSize(c *check.C) {
 	testRequires(c, DaemonIsLinux)
 	runSleepingContainer(c)
@@ -855,14 +674,6 @@ func (s *DockerSuite) TestPsListContainersFilterNetwork(c *check.C) {
 	// Making sure onbridgenetwork and onnonenetwork is on the output
 	c.Assert(containerOut, checker.Contains, "onnonenetwork", check.Commentf("Missing the container on none network\n"))
 	c.Assert(containerOut, checker.Contains, "onbridgenetwork", check.Commentf("Missing the container on bridge network\n"))
-
-	nwID, _ := dockerCmd(c, "network", "inspect", "--format", "{{.ID}}", "bridge")
-
-	// Filter by network ID
-	out, _ = dockerCmd(c, "ps", "--filter", "network="+nwID)
-	containerOut = strings.TrimSpace(string(out))
-
-	c.Assert(containerOut, checker.Contains, "onbridgenetwork")
 }
 
 func (s *DockerSuite) TestPsByOrder(c *check.C) {

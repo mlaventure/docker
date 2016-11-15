@@ -13,7 +13,6 @@ import (
 	"io/ioutil"
 
 	"github.com/docker/docker/pkg/integration/checker"
-	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/go-connections/nat"
 	"github.com/go-check/check"
 )
@@ -211,27 +210,6 @@ func (s *DockerSuite) TestCreateLabels(c *check.C) {
 	}
 }
 
-func (s *DockerSuite) TestCreateLabelFromImage(c *check.C) {
-	imageName := "testcreatebuildlabel"
-	_, err := buildImage(imageName,
-		`FROM busybox
-		LABEL k1=v1 k2=v2`,
-		true)
-
-	c.Assert(err, check.IsNil)
-
-	name := "test_create_labels_from_image"
-	expected := map[string]string{"k2": "x", "k3": "v3", "k1": "v1"}
-	dockerCmd(c, "create", "--name", name, "-l", "k2=x", "--label", "k3=v3", imageName)
-
-	actual := make(map[string]string)
-	inspectFieldAndMarshall(c, name, "Config.Labels", &actual)
-
-	if !reflect.DeepEqual(expected, actual) {
-		c.Fatalf("Expected %s got %s", expected, actual)
-	}
-}
-
 func (s *DockerSuite) TestCreateHostnameWithNumber(c *check.C) {
 	// TODO Windows. Consider enabling this in TP5 timeframe if Windows support
 	// is fully hooked up. The hostname is passed through, but only to the
@@ -268,41 +246,6 @@ func (s *DockerSuite) TestCreateModeIpcContainer(c *check.C) {
 	id := strings.TrimSpace(out)
 
 	dockerCmd(c, "create", fmt.Sprintf("--ipc=container:%s", id), "busybox")
-}
-
-func (s *DockerSuite) TestCreateByImageID(c *check.C) {
-	imageName := "testcreatebyimageid"
-	imageID, err := buildImage(imageName,
-		`FROM busybox
-		MAINTAINER dockerio`,
-		true)
-	if err != nil {
-		c.Fatal(err)
-	}
-	truncatedImageID := stringid.TruncateID(imageID)
-
-	dockerCmd(c, "create", imageID)
-	dockerCmd(c, "create", truncatedImageID)
-	dockerCmd(c, "create", fmt.Sprintf("%s:%s", imageName, truncatedImageID))
-
-	// Ensure this fails
-	out, exit, _ := dockerCmdWithError("create", fmt.Sprintf("%s:%s", imageName, imageID))
-	if exit == 0 {
-		c.Fatalf("expected non-zero exit code; received %d", exit)
-	}
-
-	if expected := "Error parsing reference"; !strings.Contains(out, expected) {
-		c.Fatalf(`Expected %q in output; got: %s`, expected, out)
-	}
-
-	out, exit, _ = dockerCmdWithError("create", fmt.Sprintf("%s:%s", "wrongimage", truncatedImageID))
-	if exit == 0 {
-		c.Fatalf("expected non-zero exit code; received %d", exit)
-	}
-
-	if expected := "Unable to find image"; !strings.Contains(out, expected) {
-		c.Fatalf(`Expected %q in output; got: %s`, expected, out)
-	}
 }
 
 func (s *DockerTrustSuite) TestTrustedCreate(c *check.C) {

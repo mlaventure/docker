@@ -73,7 +73,6 @@ func (s *DockerRegistrySuite) TestUserAgentPassThrough(c *check.C) {
 	buildReg, err := newTestRegistry(c)
 	c.Assert(err, check.IsNil)
 	registerUserAgentHandler(buildReg, &buildUA)
-	buildRepoName := fmt.Sprintf("%s/busybox", buildReg.hostport)
 
 	pullReg, err := newTestRegistry(c)
 	c.Assert(err, check.IsNil)
@@ -83,7 +82,6 @@ func (s *DockerRegistrySuite) TestUserAgentPassThrough(c *check.C) {
 	pushReg, err := newTestRegistry(c)
 	c.Assert(err, check.IsNil)
 	registerUserAgentHandler(pushReg, &pushUA)
-	pushRepoName := fmt.Sprintf("%s/busybox", pushReg.hostport)
 
 	loginReg, err := newTestRegistry(c)
 	c.Assert(err, check.IsNil)
@@ -97,24 +95,10 @@ func (s *DockerRegistrySuite) TestUserAgentPassThrough(c *check.C) {
 		"--disable-legacy-registry=true")
 	c.Assert(err, check.IsNil)
 
-	dockerfileName, cleanup1, err := makefile(fmt.Sprintf("FROM %s", buildRepoName))
-	c.Assert(err, check.IsNil, check.Commentf("Unable to create test dockerfile"))
-	defer cleanup1()
-	s.d.Cmd("build", "--file", dockerfileName, ".")
-	regexpCheckUA(c, buildUA)
-
 	s.d.Cmd("login", "-u", "richard", "-p", "testtest", "-e", "testuser@testdomain.com", loginReg.hostport)
 	regexpCheckUA(c, loginUA)
 
 	s.d.Cmd("pull", pullRepoName)
 	regexpCheckUA(c, pullUA)
 
-	dockerfileName, cleanup2, err := makefile(`FROM scratch
-	ENV foo bar`)
-	c.Assert(err, check.IsNil, check.Commentf("Unable to create test dockerfile"))
-	defer cleanup2()
-	s.d.Cmd("build", "-t", pushRepoName, "--file", dockerfileName, ".")
-
-	s.d.Cmd("push", pushRepoName)
-	regexpCheckUA(c, pushUA)
 }

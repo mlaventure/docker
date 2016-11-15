@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -9,57 +8,6 @@ import (
 	"github.com/docker/docker/pkg/integration/checker"
 	"github.com/go-check/check"
 )
-
-// This is a heisen-test.  Because the created timestamp of images and the behavior of
-// sort is not predictable it doesn't always fail.
-func (s *DockerSuite) TestBuildHistory(c *check.C) {
-	testRequires(c, DaemonIsLinux) // TODO Windows: This test passes on Windows,
-	// but currently adds a disproportionate amount of time for the value it has.
-	// Removing it from Windows CI for now, but this will be revisited in the
-	// TP5 timeframe when perf is better.
-	name := "testbuildhistory"
-	_, err := buildImage(name, `FROM `+minimalBaseImage()+`
-LABEL label.A="A"
-LABEL label.B="B"
-LABEL label.C="C"
-LABEL label.D="D"
-LABEL label.E="E"
-LABEL label.F="F"
-LABEL label.G="G"
-LABEL label.H="H"
-LABEL label.I="I"
-LABEL label.J="J"
-LABEL label.K="K"
-LABEL label.L="L"
-LABEL label.M="M"
-LABEL label.N="N"
-LABEL label.O="O"
-LABEL label.P="P"
-LABEL label.Q="Q"
-LABEL label.R="R"
-LABEL label.S="S"
-LABEL label.T="T"
-LABEL label.U="U"
-LABEL label.V="V"
-LABEL label.W="W"
-LABEL label.X="X"
-LABEL label.Y="Y"
-LABEL label.Z="Z"`,
-		true)
-
-	c.Assert(err, checker.IsNil)
-
-	out, _ := dockerCmd(c, "history", "testbuildhistory")
-	actualValues := strings.Split(out, "\n")[1:27]
-	expectedValues := [26]string{"Z", "Y", "X", "W", "V", "U", "T", "S", "R", "Q", "P", "O", "N", "M", "L", "K", "J", "I", "H", "G", "F", "E", "D", "C", "B", "A"}
-
-	for i := 0; i < 26; i++ {
-		echoValue := fmt.Sprintf("LABEL label.%s=%s", expectedValues[i], expectedValues[i])
-		actualValue := actualValues[i]
-		c.Assert(actualValue, checker.Contains, echoValue)
-	}
-
-}
 
 func (s *DockerSuite) TestHistoryExistentImage(c *check.C) {
 	dockerCmd(c, "history", "busybox")

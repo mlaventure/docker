@@ -21,7 +21,6 @@ import (
 
 	"github.com/docker/docker/pkg/integration/checker"
 	"github.com/docker/docker/pkg/mount"
-	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/stringutils"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/go-connections/nat"
@@ -195,80 +194,6 @@ func (s *DockerSuite) TestRunLinksContainerWithContainerId(c *check.C) {
 	}
 }
 
-func (s *DockerSuite) TestUserDefinedNetworkLinks(c *check.C) {
-	testRequires(c, DaemonIsLinux, NotUserNamespace, NotArm)
-	dockerCmd(c, "network", "create", "-d", "bridge", "udlinkNet")
-
-	dockerCmd(c, "run", "-d", "--net=udlinkNet", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-
-	// run a container in user-defined network udlinkNet with a link for an existing container
-	// and a link for a container that doesn't exist
-	dockerCmd(c, "run", "-d", "--net=udlinkNet", "--name=second", "--link=first:foo",
-		"--link=third:bar", "busybox", "top")
-	c.Assert(waitRun("second"), check.IsNil)
-
-	// ping to first and its alias foo must succeed
-	_, _, err := dockerCmdWithError("exec", "second", "ping", "-c", "1", "first")
-	c.Assert(err, check.IsNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "foo")
-	c.Assert(err, check.IsNil)
-
-	// ping to third and its alias must fail
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "third")
-	c.Assert(err, check.NotNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "bar")
-	c.Assert(err, check.NotNil)
-
-	// start third container now
-	dockerCmd(c, "run", "-d", "--net=udlinkNet", "--name=third", "busybox", "top")
-	c.Assert(waitRun("third"), check.IsNil)
-
-	// ping to third and its alias must succeed now
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "third")
-	c.Assert(err, check.IsNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "bar")
-	c.Assert(err, check.IsNil)
-}
-
-func (s *DockerSuite) TestUserDefinedNetworkLinksWithRestart(c *check.C) {
-	testRequires(c, DaemonIsLinux, NotUserNamespace, NotArm)
-	dockerCmd(c, "network", "create", "-d", "bridge", "udlinkNet")
-
-	dockerCmd(c, "run", "-d", "--net=udlinkNet", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-
-	dockerCmd(c, "run", "-d", "--net=udlinkNet", "--name=second", "--link=first:foo",
-		"busybox", "top")
-	c.Assert(waitRun("second"), check.IsNil)
-
-	// ping to first and its alias foo must succeed
-	_, _, err := dockerCmdWithError("exec", "second", "ping", "-c", "1", "first")
-	c.Assert(err, check.IsNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "foo")
-	c.Assert(err, check.IsNil)
-
-	// Restart first container
-	dockerCmd(c, "restart", "first")
-	c.Assert(waitRun("first"), check.IsNil)
-
-	// ping to first and its alias foo must still succeed
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "first")
-	c.Assert(err, check.IsNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "foo")
-	c.Assert(err, check.IsNil)
-
-	// Restart second container
-	dockerCmd(c, "restart", "second")
-	c.Assert(waitRun("second"), check.IsNil)
-
-	// ping to first and its alias foo must still succeed
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "first")
-	c.Assert(err, check.IsNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "foo")
-	c.Assert(err, check.IsNil)
-}
-
 func (s *DockerSuite) TestRunWithNetAliasOnDefaultNetworks(c *check.C) {
 	testRequires(c, DaemonIsLinux, NotUserNamespace, NotArm)
 
@@ -278,53 +203,6 @@ func (s *DockerSuite) TestRunWithNetAliasOnDefaultNetworks(c *check.C) {
 		c.Assert(err, checker.NotNil)
 		c.Assert(out, checker.Contains, runconfig.ErrUnsupportedNetworkAndAlias.Error())
 	}
-}
-
-func (s *DockerSuite) TestUserDefinedNetworkAlias(c *check.C) {
-	testRequires(c, DaemonIsLinux, NotUserNamespace, NotArm)
-	dockerCmd(c, "network", "create", "-d", "bridge", "net1")
-
-	cid1, _ := dockerCmd(c, "run", "-d", "--net=net1", "--name=first", "--net-alias=foo1", "--net-alias=foo2", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-
-	// Check if default short-id alias is added automatically
-	id := strings.TrimSpace(cid1)
-	aliases := inspectField(c, id, "NetworkSettings.Networks.net1.Aliases")
-	c.Assert(aliases, checker.Contains, stringid.TruncateID(id))
-
-	cid2, _ := dockerCmd(c, "run", "-d", "--net=net1", "--name=second", "busybox", "top")
-	c.Assert(waitRun("second"), check.IsNil)
-
-	// Check if default short-id alias is added automatically
-	id = strings.TrimSpace(cid2)
-	aliases = inspectField(c, id, "NetworkSettings.Networks.net1.Aliases")
-	c.Assert(aliases, checker.Contains, stringid.TruncateID(id))
-
-	// ping to first and its network-scoped aliases
-	_, _, err := dockerCmdWithError("exec", "second", "ping", "-c", "1", "first")
-	c.Assert(err, check.IsNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "foo1")
-	c.Assert(err, check.IsNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "foo2")
-	c.Assert(err, check.IsNil)
-	// ping first container's short-id alias
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", stringid.TruncateID(cid1))
-	c.Assert(err, check.IsNil)
-
-	// Restart first container
-	dockerCmd(c, "restart", "first")
-	c.Assert(waitRun("first"), check.IsNil)
-
-	// ping to first and its network-scoped aliases must succeed
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "first")
-	c.Assert(err, check.IsNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "foo1")
-	c.Assert(err, check.IsNil)
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", "foo2")
-	c.Assert(err, check.IsNil)
-	// ping first container's short-id alias
-	_, _, err = dockerCmdWithError("exec", "second", "ping", "-c", "1", stringid.TruncateID(cid1))
-	c.Assert(err, check.IsNil)
 }
 
 // Issue 9677.
@@ -364,82 +242,6 @@ func (s *DockerSuite) TestRunWithVolumesFromExited(c *check.C) {
 	if exitCode != 0 {
 		c.Fatal("2", out, exitCode)
 	}
-}
-
-// Volume path is a symlink which also exists on the host, and the host side is a file not a dir
-// But the volume call is just a normal volume, not a bind mount
-func (s *DockerSuite) TestRunCreateVolumesInSymlinkDir(c *check.C) {
-	var (
-		dockerFile    string
-		containerPath string
-		cmd           string
-	)
-	// TODO Windows (Post TP5): This test cannot run on a Windows daemon as
-	// Windows does not support symlinks inside a volume path
-	testRequires(c, SameHostDaemon, DaemonIsLinux)
-	name := "test-volume-symlink"
-
-	dir, err := ioutil.TempDir("", name)
-	if err != nil {
-		c.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-
-	// In the case of Windows to Windows CI, if the machine is setup so that
-	// the temp directory is not the C: drive, this test is invalid and will
-	// not work.
-	if daemonPlatform == "windows" && strings.ToLower(dir[:1]) != "c" {
-		c.Skip("Requires TEMP to point to C: drive")
-	}
-
-	f, err := os.OpenFile(filepath.Join(dir, "test"), os.O_CREATE, 0700)
-	if err != nil {
-		c.Fatal(err)
-	}
-	f.Close()
-
-	if daemonPlatform == "windows" {
-		dockerFile = fmt.Sprintf("FROM %s\nRUN mkdir %s\nRUN mklink /D c:\\test %s", WindowsBaseImage, dir, dir)
-		containerPath = `c:\test\test`
-		cmd = "tasklist"
-	} else {
-		dockerFile = fmt.Sprintf("FROM busybox\nRUN mkdir -p %s\nRUN ln -s %s /test", dir, dir)
-		containerPath = "/test/test"
-		cmd = "true"
-	}
-	if _, err := buildImage(name, dockerFile, false); err != nil {
-		c.Fatal(err)
-	}
-
-	dockerCmd(c, "run", "-v", containerPath, name, cmd)
-}
-
-// Volume path is a symlink in the container
-func (s *DockerSuite) TestRunCreateVolumesInSymlinkDir2(c *check.C) {
-	var (
-		dockerFile    string
-		containerPath string
-		cmd           string
-	)
-	// TODO Windows (Post TP5): This test cannot run on a Windows daemon as
-	// Windows does not support symlinks inside a volume path
-	testRequires(c, SameHostDaemon, DaemonIsLinux)
-	name := "test-volume-symlink2"
-
-	if daemonPlatform == "windows" {
-		dockerFile = fmt.Sprintf("FROM %s\nRUN mkdir c:\\%s\nRUN mklink /D c:\\test c:\\%s", WindowsBaseImage, name, name)
-		containerPath = `c:\test\test`
-		cmd = "tasklist"
-	} else {
-		dockerFile = fmt.Sprintf("FROM busybox\nRUN mkdir -p /%s\nRUN ln -s /%s /test", name, name)
-		containerPath = "/test/test"
-		cmd = "true"
-	}
-	if _, err := buildImage(name, dockerFile, false); err != nil {
-		c.Fatal(err)
-	}
-
-	dockerCmd(c, "run", "-v", containerPath, name, cmd)
 }
 
 func (s *DockerSuite) TestRunVolumesMountedAsReadonly(c *check.C) {
@@ -570,14 +372,6 @@ func (s *DockerSuite) TestRunNoDupVolumes(c *check.C) {
 			c.Fatalf("Expected 'duplicate mount point' error, got %v", out)
 		}
 	}
-	// create failed should have create volume volumename1 or volumename2
-	// we should remove volumename2 or volumename2 successfully
-	out, _ := dockerCmd(c, "volume", "ls")
-	if strings.Contains(out, volumename1) {
-		dockerCmd(c, "volume", "rm", volumename1)
-	} else {
-		dockerCmd(c, "volume", "rm", volumename2)
-	}
 }
 
 // Test for #1351
@@ -626,80 +420,6 @@ func (s *DockerSuite) TestRunCreateVolume(c *check.C) {
 		prefix = `c:`
 	}
 	dockerCmd(c, "run", "-v", prefix+"/var/lib/data", "busybox", "true")
-}
-
-// Test that creating a volume with a symlink in its path works correctly. Test for #5152.
-// Note that this bug happens only with symlinks with a target that starts with '/'.
-func (s *DockerSuite) TestRunCreateVolumeWithSymlink(c *check.C) {
-	// Cannot run on Windows as relies on Linux-specific functionality (sh -c mount...)
-	testRequires(c, DaemonIsLinux)
-	image := "docker-test-createvolumewithsymlink"
-
-	buildCmd := exec.Command(dockerBinary, "build", "-t", image, "-")
-	buildCmd.Stdin = strings.NewReader(`FROM busybox
-		RUN ln -s home /bar`)
-	buildCmd.Dir = workingDirectory
-	err := buildCmd.Run()
-	if err != nil {
-		c.Fatalf("could not build '%s': %v", image, err)
-	}
-
-	_, exitCode, err := dockerCmdWithError("run", "-v", "/bar/foo", "--name", "test-createvolumewithsymlink", image, "sh", "-c", "mount | grep -q /home/foo")
-	if err != nil || exitCode != 0 {
-		c.Fatalf("[run] err: %v, exitcode: %d", err, exitCode)
-	}
-
-	volPath, err := inspectMountSourceField("test-createvolumewithsymlink", "/bar/foo")
-	c.Assert(err, checker.IsNil)
-
-	_, exitCode, err = dockerCmdWithError("rm", "-v", "test-createvolumewithsymlink")
-	if err != nil || exitCode != 0 {
-		c.Fatalf("[rm] err: %v, exitcode: %d", err, exitCode)
-	}
-
-	_, err = os.Stat(volPath)
-	if !os.IsNotExist(err) {
-		c.Fatalf("[open] (expecting 'file does not exist' error) err: %v, volPath: %s", err, volPath)
-	}
-}
-
-// Tests that a volume path that has a symlink exists in a container mounting it with `--volumes-from`.
-func (s *DockerSuite) TestRunVolumesFromSymlinkPath(c *check.C) {
-	// TODO Windows (Post TP5): This test cannot run on a Windows daemon as
-	// Windows does not support symlinks inside a volume path
-	testRequires(c, DaemonIsLinux)
-	name := "docker-test-volumesfromsymlinkpath"
-	prefix := ""
-	dfContents := `FROM busybox
-		RUN ln -s home /foo
-		VOLUME ["/foo/bar"]`
-
-	if daemonPlatform == "windows" {
-		prefix = `c:`
-		dfContents = `FROM ` + WindowsBaseImage + `
-	    RUN mkdir c:\home
-		RUN mklink /D c:\foo c:\home
-		VOLUME ["c:/foo/bar"]
-		ENTRYPOINT c:\windows\system32\cmd.exe`
-	}
-
-	buildCmd := exec.Command(dockerBinary, "build", "-t", name, "-")
-	buildCmd.Stdin = strings.NewReader(dfContents)
-	buildCmd.Dir = workingDirectory
-	err := buildCmd.Run()
-	if err != nil {
-		c.Fatalf("could not build 'docker-test-volumesfromsymlinkpath': %v", err)
-	}
-
-	out, exitCode, err := dockerCmdWithError("run", "--name", "test-volumesfromsymlinkpath", name)
-	if err != nil || exitCode != 0 {
-		c.Fatalf("[run] (volume) err: %v, exitcode: %d, out: %s", err, exitCode, out)
-	}
-
-	_, exitCode, err = dockerCmdWithError("run", "--volumes-from", "test-volumesfromsymlinkpath", "busybox", "sh", "-c", "ls "+prefix+"/foo | grep -q bar")
-	if err != nil || exitCode != 0 {
-		c.Fatalf("[run] err: %v, exitcode: %d", err, exitCode)
-	}
 }
 
 func (s *DockerSuite) TestRunExitCode(c *check.C) {
@@ -1707,74 +1427,6 @@ func (s *DockerSuite) TestRunState(c *check.C) {
 	}
 }
 
-// Test for #1737
-func (s *DockerSuite) TestRunCopyVolumeUidGid(c *check.C) {
-	// Not applicable on Windows as it does not support uid or gid in this way
-	testRequires(c, DaemonIsLinux)
-	name := "testrunvolumesuidgid"
-	_, err := buildImage(name,
-		`FROM busybox
-		RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
-		RUN echo 'dockerio:x:1001:' >> /etc/group
-		RUN mkdir -p /hello && touch /hello/test && chown dockerio.dockerio /hello`,
-		true)
-	if err != nil {
-		c.Fatal(err)
-	}
-
-	// Test that the uid and gid is copied from the image to the volume
-	out, _ := dockerCmd(c, "run", "--rm", "-v", "/hello", name, "sh", "-c", "ls -l / | grep hello | awk '{print $3\":\"$4}'")
-	out = strings.TrimSpace(out)
-	if out != "dockerio:dockerio" {
-		c.Fatalf("Wrong /hello ownership: %s, expected dockerio:dockerio", out)
-	}
-}
-
-// Test for #1582
-func (s *DockerSuite) TestRunCopyVolumeContent(c *check.C) {
-	// TODO Windows, post TP5. Windows does not yet support volume functionality
-	// that copies from the image to the volume.
-	testRequires(c, DaemonIsLinux)
-	name := "testruncopyvolumecontent"
-	_, err := buildImage(name,
-		`FROM busybox
-		RUN mkdir -p /hello/local && echo hello > /hello/local/world`,
-		true)
-	if err != nil {
-		c.Fatal(err)
-	}
-
-	// Test that the content is copied from the image to the volume
-	out, _ := dockerCmd(c, "run", "--rm", "-v", "/hello", name, "find", "/hello")
-	if !(strings.Contains(out, "/hello/local/world") && strings.Contains(out, "/hello/local")) {
-		c.Fatal("Container failed to transfer content to volume")
-	}
-}
-
-func (s *DockerSuite) TestRunCleanupCmdOnEntrypoint(c *check.C) {
-	name := "testrunmdcleanuponentrypoint"
-	if _, err := buildImage(name,
-		`FROM busybox
-		ENTRYPOINT ["echo"]
-		CMD ["testingpoint"]`,
-		true); err != nil {
-		c.Fatal(err)
-	}
-
-	out, exit := dockerCmd(c, "run", "--entrypoint", "whoami", name)
-	if exit != 0 {
-		c.Fatalf("expected exit code 0 received %d, out: %q", exit, out)
-	}
-	out = strings.TrimSpace(out)
-	expected := "root"
-	if daemonPlatform == "windows" {
-		expected = `user manager\containeradministrator`
-	}
-	if out != expected {
-		c.Fatalf("Expected output %s, got %q", expected, out)
-	}
-}
-
 // TestRunWorkdirExistsAndIsFile checks that if 'docker run -w' with existing file can be detected
 func (s *DockerSuite) TestRunWorkdirExistsAndIsFile(c *check.C) {
 	existingFile := "/bin/cat"
@@ -2284,30 +1936,6 @@ func (s *DockerSuite) TestRunCreateVolumeEtc(c *check.C) {
 	}
 }
 
-func (s *DockerSuite) TestVolumesNoCopyData(c *check.C) {
-	// TODO Windows (Post TP5). Windows does not support volumes which
-	// are pre-populated such as is built in the dockerfile used in this test.
-	testRequires(c, DaemonIsLinux)
-	if _, err := buildImage("dataimage",
-		`FROM busybox
-		RUN mkdir -p /foo
-		RUN touch /foo/bar`,
-		true); err != nil {
-		c.Fatal(err)
-	}
-
-	dockerCmd(c, "run", "--name", "test", "-v", "/foo", "busybox")
-
-	if out, _, err := dockerCmdWithError("run", "--volumes-from", "test", "dataimage", "ls", "-lh", "/foo/bar"); err == nil || !strings.Contains(out, "No such file or directory") {
-		c.Fatalf("Data was copied on volumes-from but shouldn't be:\n%q", out)
-	}
-
-	tmpDir := randomTmpDirPath("docker_test_bind_mount_copy_data", daemonPlatform)
-	if out, _, err := dockerCmdWithError("run", "-v", tmpDir+":/foo", "dataimage", "ls", "-lh", "/foo/bar"); err == nil || !strings.Contains(out, "No such file or directory") {
-		c.Fatalf("Data was copied on bind-mount but shouldn't be:\n%q", out)
-	}
-}
-
 func (s *DockerSuite) TestRunNoOutputFromPullInStdout(c *check.C) {
 	// just run with unknown image
 	cmd := exec.Command(dockerBinary, "run", "asdfsg")
@@ -2318,41 +1946,6 @@ func (s *DockerSuite) TestRunNoOutputFromPullInStdout(c *check.C) {
 	}
 	if stdout.Len() != 0 {
 		c.Fatalf("Stdout contains output from pull: %s", stdout)
-	}
-}
-
-func (s *DockerSuite) TestRunVolumesCleanPaths(c *check.C) {
-	testRequires(c, SameHostDaemon)
-	prefix, slash := getPrefixAndSlashFromDaemonPlatform()
-	if _, err := buildImage("run_volumes_clean_paths",
-		`FROM busybox
-		VOLUME `+prefix+`/foo/`,
-		true); err != nil {
-		c.Fatal(err)
-	}
-
-	dockerCmd(c, "run", "-v", prefix+"/foo", "-v", prefix+"/bar/", "--name", "dark_helmet", "run_volumes_clean_paths")
-
-	out, err := inspectMountSourceField("dark_helmet", prefix+slash+"foo"+slash)
-	if err != errMountNotFound {
-		c.Fatalf("Found unexpected volume entry for '%s/foo/' in volumes\n%q", prefix, out)
-	}
-
-	out, err = inspectMountSourceField("dark_helmet", prefix+slash+`foo`)
-	c.Assert(err, check.IsNil)
-	if !strings.Contains(strings.ToLower(out), strings.ToLower(volumesConfigPath)) {
-		c.Fatalf("Volume was not defined for %s/foo\n%q", prefix, out)
-	}
-
-	out, err = inspectMountSourceField("dark_helmet", prefix+slash+"bar"+slash)
-	if err != errMountNotFound {
-		c.Fatalf("Found unexpected volume entry for '%s/bar/' in volumes\n%q", prefix, out)
-	}
-
-	out, err = inspectMountSourceField("dark_helmet", prefix+slash+"bar")
-	c.Assert(err, check.IsNil)
-	if !strings.Contains(strings.ToLower(out), strings.ToLower(volumesConfigPath)) {
-		c.Fatalf("Volume was not defined for %s/bar\n%q", prefix, out)
 	}
 }
 
@@ -3862,163 +3455,6 @@ func (s *DockerSuite) TestTwoContainersInNetHost(c *check.C) {
 	dockerCmd(c, "stop", "second")
 }
 
-func (s *DockerSuite) TestContainersInUserDefinedNetwork(c *check.C) {
-	testRequires(c, DaemonIsLinux, NotUserNamespace, NotArm)
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork")
-	dockerCmd(c, "run", "-d", "--net=testnetwork", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-	dockerCmd(c, "run", "-t", "--net=testnetwork", "--name=second", "busybox", "ping", "-c", "1", "first")
-}
-
-func (s *DockerSuite) TestContainersInMultipleNetworks(c *check.C) {
-	testRequires(c, DaemonIsLinux, NotUserNamespace, NotArm)
-	// Create 2 networks using bridge driver
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork1")
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork2")
-	// Run and connect containers to testnetwork1
-	dockerCmd(c, "run", "-d", "--net=testnetwork1", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-	dockerCmd(c, "run", "-d", "--net=testnetwork1", "--name=second", "busybox", "top")
-	c.Assert(waitRun("second"), check.IsNil)
-	// Check connectivity between containers in testnetwork2
-	dockerCmd(c, "exec", "first", "ping", "-c", "1", "second.testnetwork1")
-	// Connect containers to testnetwork2
-	dockerCmd(c, "network", "connect", "testnetwork2", "first")
-	dockerCmd(c, "network", "connect", "testnetwork2", "second")
-	// Check connectivity between containers
-	dockerCmd(c, "exec", "second", "ping", "-c", "1", "first.testnetwork2")
-}
-
-func (s *DockerSuite) TestContainersNetworkIsolation(c *check.C) {
-	testRequires(c, DaemonIsLinux, NotUserNamespace, NotArm)
-	// Create 2 networks using bridge driver
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork1")
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork2")
-	// Run 1 container in testnetwork1 and another in testnetwork2
-	dockerCmd(c, "run", "-d", "--net=testnetwork1", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-	dockerCmd(c, "run", "-d", "--net=testnetwork2", "--name=second", "busybox", "top")
-	c.Assert(waitRun("second"), check.IsNil)
-
-	// Check Isolation between containers : ping must fail
-	_, _, err := dockerCmdWithError("exec", "first", "ping", "-c", "1", "second")
-	c.Assert(err, check.NotNil)
-	// Connect first container to testnetwork2
-	dockerCmd(c, "network", "connect", "testnetwork2", "first")
-	// ping must succeed now
-	_, _, err = dockerCmdWithError("exec", "first", "ping", "-c", "1", "second")
-	c.Assert(err, check.IsNil)
-
-	// Disconnect first container from testnetwork2
-	dockerCmd(c, "network", "disconnect", "testnetwork2", "first")
-	// ping must fail again
-	_, _, err = dockerCmdWithError("exec", "first", "ping", "-c", "1", "second")
-	c.Assert(err, check.NotNil)
-}
-
-func (s *DockerSuite) TestNetworkRmWithActiveContainers(c *check.C) {
-	testRequires(c, DaemonIsLinux, NotUserNamespace)
-	// Create 2 networks using bridge driver
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork1")
-	// Run and connect containers to testnetwork1
-	dockerCmd(c, "run", "-d", "--net=testnetwork1", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-	dockerCmd(c, "run", "-d", "--net=testnetwork1", "--name=second", "busybox", "top")
-	c.Assert(waitRun("second"), check.IsNil)
-	// Network delete with active containers must fail
-	_, _, err := dockerCmdWithError("network", "rm", "testnetwork1")
-	c.Assert(err, check.NotNil)
-
-	dockerCmd(c, "stop", "first")
-	_, _, err = dockerCmdWithError("network", "rm", "testnetwork1")
-	c.Assert(err, check.NotNil)
-}
-
-func (s *DockerSuite) TestContainerRestartInMultipleNetworks(c *check.C) {
-	testRequires(c, DaemonIsLinux, NotUserNamespace, NotArm)
-	// Create 2 networks using bridge driver
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork1")
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork2")
-
-	// Run and connect containers to testnetwork1
-	dockerCmd(c, "run", "-d", "--net=testnetwork1", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-	dockerCmd(c, "run", "-d", "--net=testnetwork1", "--name=second", "busybox", "top")
-	c.Assert(waitRun("second"), check.IsNil)
-	// Check connectivity between containers in testnetwork2
-	dockerCmd(c, "exec", "first", "ping", "-c", "1", "second.testnetwork1")
-	// Connect containers to testnetwork2
-	dockerCmd(c, "network", "connect", "testnetwork2", "first")
-	dockerCmd(c, "network", "connect", "testnetwork2", "second")
-	// Check connectivity between containers
-	dockerCmd(c, "exec", "second", "ping", "-c", "1", "first.testnetwork2")
-
-	// Stop second container and test ping failures on both networks
-	dockerCmd(c, "stop", "second")
-	_, _, err := dockerCmdWithError("exec", "first", "ping", "-c", "1", "second.testnetwork1")
-	c.Assert(err, check.NotNil)
-	_, _, err = dockerCmdWithError("exec", "first", "ping", "-c", "1", "second.testnetwork2")
-	c.Assert(err, check.NotNil)
-
-	// Start second container and connectivity must be restored on both networks
-	dockerCmd(c, "start", "second")
-	dockerCmd(c, "exec", "first", "ping", "-c", "1", "second.testnetwork1")
-	dockerCmd(c, "exec", "second", "ping", "-c", "1", "first.testnetwork2")
-}
-
-func (s *DockerSuite) TestContainerWithConflictingHostNetworks(c *check.C) {
-	testRequires(c, DaemonIsLinux, NotUserNamespace)
-	// Run a container with --net=host
-	dockerCmd(c, "run", "-d", "--net=host", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-
-	// Create a network using bridge driver
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork1")
-
-	// Connecting to the user defined network must fail
-	_, _, err := dockerCmdWithError("network", "connect", "testnetwork1", "first")
-	c.Assert(err, check.NotNil)
-}
-
-func (s *DockerSuite) TestContainerWithConflictingSharedNetwork(c *check.C) {
-	testRequires(c, DaemonIsLinux)
-	dockerCmd(c, "run", "-d", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-	// Run second container in first container's network namespace
-	dockerCmd(c, "run", "-d", "--net=container:first", "--name=second", "busybox", "top")
-	c.Assert(waitRun("second"), check.IsNil)
-
-	// Create a network using bridge driver
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork1")
-
-	// Connecting to the user defined network must fail
-	out, _, err := dockerCmdWithError("network", "connect", "testnetwork1", "second")
-	c.Assert(err, check.NotNil)
-	c.Assert(out, checker.Contains, runconfig.ErrConflictSharedNetwork.Error())
-}
-
-func (s *DockerSuite) TestContainerWithConflictingNoneNetwork(c *check.C) {
-	testRequires(c, DaemonIsLinux)
-	dockerCmd(c, "run", "-d", "--net=none", "--name=first", "busybox", "top")
-	c.Assert(waitRun("first"), check.IsNil)
-
-	// Create a network using bridge driver
-	dockerCmd(c, "network", "create", "-d", "bridge", "testnetwork1")
-
-	// Connecting to the user defined network must fail
-	out, _, err := dockerCmdWithError("network", "connect", "testnetwork1", "first")
-	c.Assert(err, check.NotNil)
-	c.Assert(out, checker.Contains, runconfig.ErrConflictNoNetwork.Error())
-
-	// create a container connected to testnetwork1
-	dockerCmd(c, "run", "-d", "--net=testnetwork1", "--name=second", "busybox", "top")
-	c.Assert(waitRun("second"), check.IsNil)
-
-	// Connect second container to none network. it must fail as well
-	_, _, err = dockerCmdWithError("network", "connect", "none", "second")
-	c.Assert(err, check.NotNil)
-}
-
 // #11957 - stdin with no tty does not exit if stdin is not closed even though container exited
 func (s *DockerSuite) TestRunStdinBlockedAfterContainerExit(c *check.C) {
 	cmd := exec.Command(dockerBinary, "run", "-i", "--name=test", "busybox", "true")
@@ -4131,29 +3567,6 @@ func (s *DockerSuite) TestRunInvalidReference(c *check.C) {
 
 	if !strings.Contains(out, "Error parsing reference") {
 		c.Fatalf(`Expected "Error parsing reference" in output; got: %s`, out)
-	}
-}
-
-// Test fix for issue #17854
-func (s *DockerSuite) TestRunInitLayerPathOwnership(c *check.C) {
-	// Not applicable on Windows as it does not support Linux uid/gid ownership
-	testRequires(c, DaemonIsLinux)
-	name := "testetcfileownership"
-	_, err := buildImage(name,
-		`FROM busybox
-		RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
-		RUN echo 'dockerio:x:1001:' >> /etc/group
-		RUN chown dockerio:dockerio /etc`,
-		true)
-	if err != nil {
-		c.Fatal(err)
-	}
-
-	// Test that dockerio ownership of /etc is retained at runtime
-	out, _ := dockerCmd(c, "run", "--rm", name, "stat", "-c", "%U:%G", "/etc")
-	out = strings.TrimSpace(out)
-	if out != "dockerio:dockerio" {
-		c.Fatalf("Wrong /etc ownership: expected dockerio:dockerio, got %q", out)
 	}
 }
 
@@ -4295,54 +3708,6 @@ func (s *DockerSuite) TestRunNamedVolumesMountedAsShared(c *check.C) {
 	}
 }
 
-func (s *DockerSuite) TestRunNamedVolumeCopyImageData(c *check.C) {
-	testRequires(c, DaemonIsLinux)
-
-	testImg := "testvolumecopy"
-	_, err := buildImage(testImg, `
-	FROM busybox
-	RUN mkdir -p /foo && echo hello > /foo/hello
-	`, true)
-	c.Assert(err, check.IsNil)
-
-	dockerCmd(c, "run", "-v", "foo:/foo", testImg)
-	out, _ := dockerCmd(c, "run", "-v", "foo:/foo", "busybox", "cat", "/foo/hello")
-	c.Assert(strings.TrimSpace(out), check.Equals, "hello")
-}
-
-func (s *DockerSuite) TestRunNamedVolumeNotRemoved(c *check.C) {
-	prefix, _ := getPrefixAndSlashFromDaemonPlatform()
-
-	dockerCmd(c, "volume", "create", "--name", "test")
-
-	dockerCmd(c, "run", "--rm", "-v", "test:"+prefix+"/foo", "-v", prefix+"/bar", "busybox", "true")
-	dockerCmd(c, "volume", "inspect", "test")
-	out, _ := dockerCmd(c, "volume", "ls", "-q")
-	c.Assert(strings.TrimSpace(out), checker.Equals, "test")
-
-	dockerCmd(c, "run", "--name=test", "-v", "test:"+prefix+"/foo", "-v", prefix+"/bar", "busybox", "true")
-	dockerCmd(c, "rm", "-fv", "test")
-	dockerCmd(c, "volume", "inspect", "test")
-	out, _ = dockerCmd(c, "volume", "ls", "-q")
-	c.Assert(strings.TrimSpace(out), checker.Equals, "test")
-}
-
-func (s *DockerSuite) TestRunNamedVolumesFromNotRemoved(c *check.C) {
-	prefix, _ := getPrefixAndSlashFromDaemonPlatform()
-
-	dockerCmd(c, "volume", "create", "--name", "test")
-	dockerCmd(c, "run", "--name=parent", "-v", "test:"+prefix+"/foo", "-v", prefix+"/bar", "busybox", "true")
-	dockerCmd(c, "run", "--name=child", "--volumes-from=parent", "busybox", "true")
-
-	// Remove the parent so there are not other references to the volumes
-	dockerCmd(c, "rm", "-f", "parent")
-	// now remove the child and ensure the named volume (and only the named volume) still exists
-	dockerCmd(c, "rm", "-fv", "child")
-	dockerCmd(c, "volume", "inspect", "test")
-	out, _ := dockerCmd(c, "volume", "ls", "-q")
-	c.Assert(strings.TrimSpace(out), checker.Equals, "test")
-}
-
 func (s *DockerSuite) TestRunAttachFailedNoLeak(c *check.C) {
 	nroutines, err := getGoroutineNumber()
 	c.Assert(err, checker.IsNil)
@@ -4375,45 +3740,6 @@ func (s *DockerSuite) TestRunVolumeWithOneCharacter(c *check.C) {
 
 	out, _ := dockerCmd(c, "run", "-v", "/tmp/q:/foo", "busybox", "sh", "-c", "find /foo")
 	c.Assert(strings.TrimSpace(out), checker.Equals, "/foo")
-}
-
-func (s *DockerSuite) TestRunVolumeCopyFlag(c *check.C) {
-	testRequires(c, DaemonIsLinux) // Windows does not support copying data from image to the volume
-	_, err := buildImage("volumecopy",
-		`FROM busybox
-		RUN mkdir /foo && echo hello > /foo/bar
-		CMD cat /foo/bar`,
-		true,
-	)
-	c.Assert(err, checker.IsNil)
-
-	dockerCmd(c, "volume", "create", "--name=test")
-
-	// test with the nocopy flag
-	out, _, err := dockerCmdWithError("run", "-v", "test:/foo:nocopy", "volumecopy")
-	c.Assert(err, checker.NotNil, check.Commentf(out))
-	// test default behavior which is to copy for non-binds
-	out, _ = dockerCmd(c, "run", "-v", "test:/foo", "volumecopy")
-	c.Assert(strings.TrimSpace(out), checker.Equals, "hello")
-	// error out when the volume is already populated
-	out, _, err = dockerCmdWithError("run", "-v", "test:/foo:copy", "volumecopy")
-	c.Assert(err, checker.NotNil, check.Commentf(out))
-	// do not error out when copy isn't explicitly set even though it's already populated
-	out, _ = dockerCmd(c, "run", "-v", "test:/foo", "volumecopy")
-	c.Assert(strings.TrimSpace(out), checker.Equals, "hello")
-
-	// do not allow copy modes on volumes-from
-	dockerCmd(c, "run", "--name=test", "-v", "/foo", "busybox", "true")
-	out, _, err = dockerCmdWithError("run", "--volumes-from=test:copy", "busybox", "true")
-	c.Assert(err, checker.NotNil, check.Commentf(out))
-	out, _, err = dockerCmdWithError("run", "--volumes-from=test:nocopy", "busybox", "true")
-	c.Assert(err, checker.NotNil, check.Commentf(out))
-
-	// do not allow copy modes on binds
-	out, _, err = dockerCmdWithError("run", "-v", "/foo:/bar:copy", "busybox", "true")
-	c.Assert(err, checker.NotNil, check.Commentf(out))
-	out, _, err = dockerCmdWithError("run", "-v", "/foo:/bar:nocopy", "busybox", "true")
-	c.Assert(err, checker.NotNil, check.Commentf(out))
 }
 
 func (s *DockerSuite) TestRunTooLongHostname(c *check.C) {

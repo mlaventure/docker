@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/docker/docker/pkg/integration/checker"
-	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/stringutils"
 	"github.com/go-check/check"
 )
@@ -184,42 +182,4 @@ func (s *DockerSuite) TestTagInvalidRepoName(c *check.C) {
 	if err == nil {
 		c.Fatal("tagging with image named \"sha256\" should have failed")
 	}
-}
-
-// ensure tags cannot create ambiguity with image ids
-func (s *DockerSuite) TestTagTruncationAmbiguity(c *check.C) {
-	//testRequires(c, DaemonIsLinux)
-	// Don't attempt to pull on Windows as not in hub. It's installed
-	// as an image through .ensure-frozen-images-windows
-	if daemonPlatform != "windows" {
-		if err := pullImageIfNotExist("busybox:latest"); err != nil {
-			c.Fatal("couldn't find the busybox:latest image locally and failed to pull it")
-		}
-	}
-	imageID, err := buildImage("notbusybox:latest",
-		`FROM busybox
-		MAINTAINER dockerio`,
-		true)
-	if err != nil {
-		c.Fatal(err)
-	}
-	truncatedImageID := stringid.TruncateID(imageID)
-	truncatedTag := fmt.Sprintf("notbusybox:%s", truncatedImageID)
-
-	id := inspectField(c, truncatedTag, "Id")
-
-	// Ensure inspect by image id returns image for image id
-	c.Assert(id, checker.Equals, imageID)
-	c.Logf("Built image: %s", imageID)
-
-	// test setting tag fails
-	_, _, err = dockerCmdWithError("tag", "busybox:latest", truncatedTag)
-	if err != nil {
-		c.Fatalf("Error tagging with an image id: %s", err)
-	}
-
-	id = inspectField(c, truncatedTag, "Id")
-
-	// Ensure id is imageID and not busybox:latest
-	c.Assert(id, checker.Not(checker.Equals), imageID)
 }

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -246,63 +245,6 @@ func (s *DockerSuite) TestSaveRepoWithMultipleImages(c *check.C) {
 	c.Assert(actual, checker.DeepEquals, expected, check.Commentf("archive does not contains the right layers: got %v, expected %v, output: %q", actual, expected, out))
 }
 
-// Issue #6722 #5892 ensure directories are included in changes
-func (s *DockerSuite) TestSaveDirectoryPermissions(c *check.C) {
-	testRequires(c, DaemonIsLinux)
-	layerEntries := []string{"opt/", "opt/a/", "opt/a/b/", "opt/a/b/c"}
-	layerEntriesAUFS := []string{"./", ".wh..wh.aufs", ".wh..wh.orph/", ".wh..wh.plnk/", "opt/", "opt/a/", "opt/a/b/", "opt/a/b/c"}
-
-	name := "save-directory-permissions"
-	tmpDir, err := ioutil.TempDir("", "save-layers-with-directories")
-	c.Assert(err, checker.IsNil, check.Commentf("failed to create temporary directory: %s", err))
-	extractionDirectory := filepath.Join(tmpDir, "image-extraction-dir")
-	os.Mkdir(extractionDirectory, 0777)
-
-	defer os.RemoveAll(tmpDir)
-	_, err = buildImage(name,
-		`FROM busybox
-	RUN adduser -D user && mkdir -p /opt/a/b && chown -R user:user /opt/a
-	RUN touch /opt/a/b/c && chown user:user /opt/a/b/c`,
-		true)
-	c.Assert(err, checker.IsNil, check.Commentf("%v", err))
-
-	out, _, err := runCommandPipelineWithOutput(
-		exec.Command(dockerBinary, "save", name),
-		exec.Command("tar", "-xf", "-", "-C", extractionDirectory),
-	)
-	c.Assert(err, checker.IsNil, check.Commentf("failed to save and extract image: %s", out))
-
-	dirs, err := ioutil.ReadDir(extractionDirectory)
-	c.Assert(err, checker.IsNil, check.Commentf("failed to get a listing of the layer directories: %s", err))
-
-	found := false
-	for _, entry := range dirs {
-		var entriesSansDev []string
-		if entry.IsDir() {
-			layerPath := filepath.Join(extractionDirectory, entry.Name(), "layer.tar")
-
-			f, err := os.Open(layerPath)
-			c.Assert(err, checker.IsNil, check.Commentf("failed to open %s: %s", layerPath, err))
-
-			entries, err := listTar(f)
-			for _, e := range entries {
-				if !strings.Contains(e, "dev/") {
-					entriesSansDev = append(entriesSansDev, e)
-				}
-			}
-			c.Assert(err, checker.IsNil, check.Commentf("encountered error while listing tar entries: %s", err))
-
-			if reflect.DeepEqual(entriesSansDev, layerEntries) || reflect.DeepEqual(entriesSansDev, layerEntriesAUFS) {
-				found = true
-				break
-			}
-		}
-	}
-
-	c.Assert(found, checker.Equals, true, check.Commentf("failed to find the layer with the right content listing"))
-
-}
-
 // Test loading a weird image where one of the layers is of zero size.
 // The layer.tar file is actually zero bytes, no padding or anything else.
 // See issue: 18170
@@ -349,34 +291,4 @@ func (s *DockerSuite) TestSaveLoadParents(c *check.C) {
 
 	inspectOut = inspectField(c, idFoo, "Parent")
 	c.Assert(inspectOut, checker.Equals, "")
-}
-
-func (s *DockerSuite) TestSaveLoadNoTag(c *check.C) {
-	testRequires(c, DaemonIsLinux)
-
-	name := "saveloadnotag"
-
-	_, err := buildImage(name, "FROM busybox\nENV foo=bar", true)
-	c.Assert(err, checker.IsNil, check.Commentf("%v", err))
-
-	id := inspectField(c, name, "Id")
-
-	// Test to make sure that save w/o name just shows imageID during load
-	out, _, err := runCommandPipelineWithOutput(
-		exec.Command(dockerBinary, "save", id),
-		exec.Command(dockerBinary, "load"))
-	c.Assert(err, checker.IsNil, check.Commentf("failed to save and load repo: %s, %v", out, err))
-
-	// Should not show 'name' but should show the image ID during the load
-	c.Assert(out, checker.Not(checker.Contains), "Loaded image: ")
-	c.Assert(out, checker.Contains, "Loaded image ID:")
-	c.Assert(out, checker.Contains, id)
-
-	// Test to make sure that save by name shows that name during load
-	out, _, err = runCommandPipelineWithOutput(
-		exec.Command(dockerBinary, "save", name),
-		exec.Command(dockerBinary, "load"))
-	c.Assert(err, checker.IsNil, check.Commentf("failed to save and load repo: %s, %v", out, err))
-	c.Assert(out, checker.Contains, "Loaded image: "+name+":latest")
-	c.Assert(out, checker.Not(checker.Contains), "Loaded image ID:")
 }

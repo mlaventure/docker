@@ -514,11 +514,6 @@ func (d *Daemon) findContainerIP(id string) string {
 	return strings.Trim(out, " \r\n'")
 }
 
-func (d *Daemon) buildImageWithOut(name, dockerfile string, useCache bool, buildFlags ...string) (string, int, error) {
-	buildCmd := buildImageCmdWithHost(name, dockerfile, d.sock(), useCache, buildFlags...)
-	return runCommandWithOutput(buildCmd)
-}
-
 func (d *Daemon) checkActiveContainerCount(c *check.C) (interface{}, check.CommentInterface) {
 	out, err := d.Cmd("ps", "-q")
 	c.Assert(err, checker.IsNil)

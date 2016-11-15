@@ -106,45 +106,6 @@ func (s *DockerSuite) TestCommitWithHostBindMount(c *check.C) {
 	dockerCmd(c, "run", "bindtest", "true")
 }
 
-func (s *DockerSuite) TestCommitChange(c *check.C) {
-	testRequires(c, DaemonIsLinux)
-	dockerCmd(c, "run", "--name", "test", "busybox", "true")
-
-	imageID, _ := dockerCmd(c, "commit",
-		"--change", "EXPOSE 8080",
-		"--change", "ENV DEBUG true",
-		"--change", "ENV test 1",
-		"--change", "ENV PATH /foo",
-		"--change", "LABEL foo bar",
-		"--change", "CMD [\"/bin/sh\"]",
-		"--change", "WORKDIR /opt",
-		"--change", "ENTRYPOINT [\"/bin/sh\"]",
-		"--change", "USER testuser",
-		"--change", "VOLUME /var/lib/docker",
-		"--change", "ONBUILD /usr/local/bin/python-build --dir /app/src",
-		"test", "test-commit")
-	imageID = strings.TrimSpace(imageID)
-
-	expected := map[string]string{
-		"Config.ExposedPorts": "map[8080/tcp:{}]",
-		"Config.Env":          "[DEBUG=true test=1 PATH=/foo]",
-		"Config.Labels":       "map[foo:bar]",
-		"Config.Cmd":          "[/bin/sh]",
-		"Config.WorkingDir":   "/opt",
-		"Config.Entrypoint":   "[/bin/sh]",
-		"Config.User":         "testuser",
-		"Config.Volumes":      "map[/var/lib/docker:{}]",
-		"Config.OnBuild":      "[/usr/local/bin/python-build --dir /app/src]",
-	}
-
-	for conf, value := range expected {
-		res := inspectField(c, imageID, conf)
-		if res != value {
-			c.Errorf("%s('%s'), expected %s", conf, res, value)
-		}
-	}
-}
-
 // TODO: commit --run is deprecated, remove this once --run is removed
 func (s *DockerSuite) TestCommitMergeConfigRun(c *check.C) {
 	testRequires(c, DaemonIsLinux)

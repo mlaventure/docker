@@ -371,29 +371,6 @@ func (s *DockerSuite) TestInspectHistory(c *check.C) {
 	c.Assert(out, checker.Contains, "test comment")
 }
 
-func (s *DockerSuite) TestInspectContainerNetworkDefault(c *check.C) {
-	testRequires(c, DaemonIsLinux)
-
-	contName := "test1"
-	dockerCmd(c, "run", "--name", contName, "-d", "busybox", "top")
-	netOut, _ := dockerCmd(c, "network", "inspect", "--format={{.ID}}", "bridge")
-	out := inspectField(c, contName, "NetworkSettings.Networks")
-	c.Assert(out, checker.Contains, "bridge")
-	out = inspectField(c, contName, "NetworkSettings.Networks.bridge.NetworkID")
-	c.Assert(strings.TrimSpace(out), checker.Equals, strings.TrimSpace(netOut))
-}
-
-func (s *DockerSuite) TestInspectContainerNetworkCustom(c *check.C) {
-	testRequires(c, DaemonIsLinux)
-
-	netOut, _ := dockerCmd(c, "network", "create", "net1")
-	dockerCmd(c, "run", "--name=container1", "--net=net1", "-d", "busybox", "top")
-	out := inspectField(c, "container1", "NetworkSettings.Networks")
-	c.Assert(out, checker.Contains, "net1")
-	out = inspectField(c, "container1", "NetworkSettings.Networks.net1.NetworkID")
-	c.Assert(strings.TrimSpace(out), checker.Equals, strings.TrimSpace(netOut))
-}
-
 func (s *DockerSuite) TestInspectRootFS(c *check.C) {
 	testRequires(c, DaemonIsLinux)
 	out, _, err := dockerCmdWithError("inspect", "busybox")

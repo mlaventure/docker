@@ -5,9 +5,18 @@ bundle .detect-daemon-osarch
 if [ $DOCKER_ENGINE_GOOS != "windows" ]; then
 	bundle .ensure-emptyfs
 	bundle .ensure-frozen-images
+
+	# the following bundles need a daemon capable of building
+	bundle .integration-daemon-stop
+	bundle .integration-daemon-start /tmp/dockerd
+
 	bundle .ensure-httpserver
 	bundle .ensure-syscall-test
 	bundle .ensure-nnp-test
+
+	# now start the daemon we want to test
+	bundle .integration-daemon-stop
+	bundle .integration-daemon-start
 else
 	# Note this is Windows to Windows CI, not Windows to Linux CI
 	bundle .ensure-frozen-images-windows

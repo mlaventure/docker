@@ -8,6 +8,12 @@ bundle_test_integration_cli() {
 
 # subshell so that we can export PATH without breaking other things
 (
+	# get client and daemon capable of build
+	docker_archive="docker-$(cat VERSION).tgz"
+	curl https://get.docker.com/builds/Linux/x86_64/$docker_archive >  /tmp/$docker_archive
+	tar -xz --strip 1 -f /tmp/$docker_archive  -C /usr/local/bin  docker/docker
+	tar -xz --strip 1 -f /tmp/$docker_archive  -C /tmp  docker/dockerd
+
 	bundle .integration-daemon-start
 
 	bundle .integration-daemon-setup

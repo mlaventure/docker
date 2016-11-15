@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/manifest/schema1"
@@ -177,32 +176,6 @@ func (s *DockerRegistrySuite) TestRemoveImageByDigest(c *check.C) {
 	//unexpected nil err trying to inspect what should be a non-existent image
 	c.Assert(err, checker.NotNil)
 	c.Assert(err.Error(), checker.Contains, "No such image")
-}
-
-func (s *DockerRegistrySuite) TestBuildByDigest(c *check.C) {
-	digest, err := setupImage(c)
-	c.Assert(err, checker.IsNil, check.Commentf("error setting up image"))
-
-	imageReference := fmt.Sprintf("%s@%s", repoName, digest)
-
-	// pull from the registry using the <name>@<digest> reference
-	dockerCmd(c, "pull", imageReference)
-
-	// get the image id
-	imageID := inspectField(c, imageReference, "Id")
-
-	// do the build
-	name := "buildbydigest"
-	_, err = buildImage(name, fmt.Sprintf(
-		`FROM %s
-     CMD ["/bin/echo", "Hello World"]`, imageReference),
-		true)
-	c.Assert(err, checker.IsNil)
-
-	// get the build's image id
-	res := inspectField(c, name, "Config.Image")
-	// make sure they match
-	c.Assert(res, checker.Equals, imageID)
 }
 
 func (s *DockerRegistrySuite) TestTagByDigest(c *check.C) {
@@ -404,44 +377,6 @@ func (s *DockerRegistrySuite) TestInspectImageWithDigests(c *check.C) {
 	c.Assert(imageJSON, checker.HasLen, 1)
 	c.Assert(imageJSON[0].RepoDigests, checker.HasLen, 1)
 	c.Assert(stringutils.InSlice(imageJSON[0].RepoDigests, imageReference), checker.Equals, true)
-}
-
-func (s *DockerRegistrySuite) TestPsListContainersFilterAncestorImageByDigest(c *check.C) {
-	digest, err := setupImage(c)
-	c.Assert(err, checker.IsNil, check.Commentf("error setting up image"))
-
-	imageReference := fmt.Sprintf("%s@%s", repoName, digest)
-
-	// pull from the registry using the <name>@<digest> reference
-	dockerCmd(c, "pull", imageReference)
-
-	// build an image from it
-	imageName1 := "images_ps_filter_test"
-	_, err = buildImage(imageName1, fmt.Sprintf(
-		`FROM %s
-		 LABEL match me 1`, imageReference), true)
-	c.Assert(err, checker.IsNil)
-
-	// run a container based on that
-	dockerCmd(c, "run", "--name=test1", imageReference, "echo", "hello")
-	expectedID, err := getIDByName("test1")
-	c.Assert(err, check.IsNil)
-
-	// run a container based on the a descendant of that too
-	dockerCmd(c, "run", "--name=test2", imageName1, "echo", "hello")
-	expectedID1, err := getIDByName("test2")
-	c.Assert(err, check.IsNil)
-
-	expectedIDs := []string{expectedID, expectedID1}
-
-	// Invalid imageReference
-	out, _ := dockerCmd(c, "ps", "-a", "-q", "--no-trunc", fmt.Sprintf("--filter=ancestor=busybox@%s", digest))
-	// Filter container for ancestor filter should be empty
-	c.Assert(strings.TrimSpace(out), checker.Equals, "")
-
-	// Valid imageReference
-	out, _ = dockerCmd(c, "ps", "-a", "-q", "--no-trunc", "--filter=ancestor="+imageReference)
-	checkPsAncestorFilterOutput(c, out, imageReference, expectedIDs)
 }
 
 func (s *DockerRegistrySuite) TestDeleteImageByIDOnlyPulledByDigest(c *check.C) {

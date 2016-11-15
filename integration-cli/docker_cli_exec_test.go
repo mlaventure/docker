@@ -464,23 +464,6 @@ func (s *DockerSuite) TestExecWithPrivileged(c *check.C) {
 
 }
 
-func (s *DockerSuite) TestExecWithImageUser(c *check.C) {
-	// Not applicable on Windows
-	testRequires(c, DaemonIsLinux)
-	name := "testbuilduser"
-	_, err := buildImage(name,
-		`FROM busybox
-		RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
-		USER dockerio`,
-		true)
-	c.Assert(err, checker.IsNil)
-
-	dockerCmd(c, "run", "-d", "--name", "dockerioexec", name, "top")
-
-	out, _ := dockerCmd(c, "exec", "dockerioexec", "whoami")
-	c.Assert(out, checker.Contains, "dockerio", check.Commentf("exec with user by id expected dockerio user got %s", out))
-}
-
 func (s *DockerSuite) TestExecOnReadonlyContainer(c *check.C) {
 	// Windows does not support read-only
 	// --read-only + userns has remount issues

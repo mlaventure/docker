@@ -2,6 +2,8 @@
 
 # see test-integration-cli for example usage of this script
 
+DOCKERD_BINARY=${1:-dockerd}
+
 base="$ABS_DEST/.."
 export PATH="$base/binary-client:$base/binary-daemon:$base/dynbinary-client:$base/dynbinary-daemon:$base/gccgo:$base/dyngccgo:$PATH"
 
@@ -23,7 +25,7 @@ if [ -z "$DOCKER_TEST_HOST" ]; then
 	fi
 fi
 
-if ! command -v dockerd &> /dev/null; then
+if ! command -v $DOCKERD_BINARY &> /dev/null; then
 	echo >&2 'error: binary-daemon or dynbinary-daemon must be run before .integration-daemon-start'
 	false
 fi
@@ -64,7 +66,7 @@ if [ -z "$DOCKER_TEST_HOST" ]; then
 
 	export DOCKER_HOST="unix://$(cd "$DEST" && pwd)/docker.sock" # "pwd" tricks to make sure $DEST is an absolute path, not a relative one
 	( set -x; exec \
-		dockerd --debug \
+		$DOCKERD_BINARY --debug \
 		--host "$DOCKER_HOST" \
 		--storage-driver "$DOCKER_GRAPHDRIVER" \
 		--pidfile "$DEST/docker.pid" \
