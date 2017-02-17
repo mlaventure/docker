@@ -80,16 +80,6 @@ func (daemon *Daemon) getCgroupDriver() string {
 	return ""
 }
 
-// adaptContainerSettings is called during container creation to modify any
-// settings necessary in the HostConfig structure.
-func (daemon *Daemon) adaptContainerSettings(hostConfig *containertypes.HostConfig, adjustCPUShares bool) error {
-	if hostConfig == nil {
-		return nil
-	}
-
-	return nil
-}
-
 func verifyContainerResources(resources *containertypes.Resources, isHyperv bool) ([]string, error) {
 	warnings := []string{}
 
@@ -191,6 +181,16 @@ func verifyContainerResources(resources *containertypes.Resources, isHyperv bool
 		return warnings, fmt.Errorf("invalid option: Windows does not support Ulimits")
 	}
 	return warnings, nil
+}
+
+// adaptContainerSettings is called during container creation to modify any
+// settings necessary in the HostConfig structure.
+func (daemon *Daemon) adaptContainerSettings(hostConfig *containertypes.HostConfig, adjustCPUShares bool) error {
+	if hostConfig == nil {
+		return nil
+	}
+
+	return nil
 }
 
 // verifyPlatformContainerSettings performs platform-specific validation of the
@@ -607,4 +607,19 @@ func (daemon *Daemon) verifyVolumesInfo(container *container.Container) error {
 
 func (daemon *Daemon) setupSeccompProfile() error {
 	return nil
+}
+
+func (daemon *Daemon) getPlatformContainerOptions(hostConfig *containertypes.HostConfig, config *containertypes.Config) (options []container.Option, err error) {
+
+	hyperv := daemon.runAsHyperVContainer(hostConfig)
+	if !hyperv && system.IsWindowsClient() {
+		// @engine maintainers. This block should not be removed. It partially enforces licensing
+		// restrictions on Windows. Ping @jhowardmsft if there are concerns or PRs to change this.
+		err = fmt.Errorf("Windows client operating systems only support Hyper-V containers")
+		return
+	}
+
+	options = append(options, container.WithHyperv(hyperv))
+
+	return
 }

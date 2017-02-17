@@ -36,105 +36,111 @@ func (daemon *Daemon) ContainerCreate(params types.ContainerCreateConfig) (conta
 
 func (daemon *Daemon) containerCreate(params types.ContainerCreateConfig, managed bool) (containertypes.ContainerCreateCreatedBody, error) {
 	start := time.Now()
+
+	logrus.Warn("Checking param.Config")
 	if params.Config == nil {
-		return containertypes.ContainerCreateCreatedBody{}, fmt.Errorf("Config cannot be empty in order to create a container")
+		return containertypes.ContainerCreateCreatedBody{},
+			fmt.Errorf("Config cannot be empty in order to create a container")
 	}
 
-	warnings, err := daemon.verifyContainerSettings(params.HostConfig, params.Config, false)
+	logrus.Warn("verifyNetworkingConfig")
+	if err := daemon.verifyNetworkingConfig(params.NetworkingConfig); err != nil {
+		return containertypes.ContainerCreateCreatedBody{}, err
+	}
+
+	logrus.Warn("mergeAndVerifyLogConfig")
+	if err := daemon.mergeAndVerifyLogConfig(&params.HostConfig.LogConfig); err != nil {
+		return containertypes.ContainerCreateCreatedBody{}, err
+	}
+
+	logrus.Warn("generateSecurityOpt")
+	if opts, err := daemon.generateSecurityOpt(params.HostConfig.IpcMode, params.HostConfig.PidMode, params.HostConfig.Privileged); err != nil {
+		return containertypes.ContainerCreateCreatedBody{}, err
+	} else {
+		params.HostConfig.SecurityOpt = append(params.HostConfig.SecurityOpt, opts...)
+	}
+
+	logrus.Warn("generateIDAndName")
+	id, name, err := daemon.generateIDAndName(params.Name)
 	if err != nil {
-		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
+		return containertypes.ContainerCreateCreatedBody{}, err
+	}
+	defer func() {
+		if err != nil {
+			logrus.Debugf("Returning with error: %v", err)
+			logrus.Debugf("Deleting id: %v", id)
+			daemon.nameIndex.Delete(id)
+		}
+	}()
+
+	containerOpts := []container.Option{
+		container.WithManaged(managed),
+		container.WithAnonymousEndpoint(params.Name == ""),
+		container.WithGraphDriver(daemon.GraphDriverName()),
+		container.WithName(name),
 	}
 
-	err = daemon.verifyNetworkingConfig(params.NetworkingConfig)
+	logrus.Warn("getPlatformContainerOptions")
+	platOpts, err := daemon.getPlatformContainerOptions(params.HostConfig, params.Config)
 	if err != nil {
-		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
+		return containertypes.ContainerCreateCreatedBody{}, err
 	}
+	containerOpts = append(containerOpts, platOpts...)
 
-	if params.HostConfig == nil {
-		params.HostConfig = &containertypes.HostConfig{}
-	}
-	err = daemon.adaptContainerSettings(params.HostConfig, params.AdjustCPUShares)
-	if err != nil {
-		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
-	}
-
-	container, err := daemon.create(params, managed)
-	if err != nil {
-		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, daemon.imageNotExistToErrcode(err)
-	}
-	containerActions.WithValues("create").UpdateSince(start)
-
-	return containertypes.ContainerCreateCreatedBody{ID: container.ID, Warnings: warnings}, nil
-}
-
-// Create creates a new container from the given configuration with a given name.
-func (daemon *Daemon) create(params types.ContainerCreateConfig, managed bool) (retC *container.Container, retErr error) {
-	var (
-		container *container.Container
-		img       *image.Image
-		imgID     image.ID
-		err       error
-	)
-
+	logrus.Warnf("Params.Config.Image: %v", params.Config.Image)
 	if params.Config.Image != "" {
+		var img *image.Image
+		logrus.Debugf("getting image: %v", params.Config.Image)
 		img, err = daemon.GetImage(params.Config.Image)
 		if err != nil {
-			return nil, err
+			logrus.Debug("failed to get image")
+			return containertypes.ContainerCreateCreatedBody{}, err
 		}
 
 		if runtime.GOOS == "solaris" && img.OS != "solaris " {
-			return nil, errors.New("Platform on which parent image was created is not Solaris")
+			return containertypes.ContainerCreateCreatedBody{},
+				errors.New("Platform on which parent image was created is not Solaris")
 		}
-		imgID = img.ID()
+
+		containerOpts = append(containerOpts, container.WithImage(img))
 	}
 
-	if err := daemon.mergeAndVerifyConfig(params.Config, img); err != nil {
-		return nil, err
-	}
-
-	if err := daemon.mergeAndVerifyLogConfig(&params.HostConfig.LogConfig); err != nil {
-		return nil, err
-	}
-
-	if container, err = daemon.newContainer(params.Name, params.Config, params.HostConfig, imgID, managed); err != nil {
-		return nil, err
+	logrus.Warn("container.New")
+	c, warnings, err := container.New(id, daemon.containerRoot(id), params.HostConfig, params.Config, containerOpts...)
+	if err != nil {
+		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
 	}
 	defer func() {
-		if retErr != nil {
-			if err := daemon.cleanupContainer(container, true, true); err != nil {
+		if err != nil {
+			logrus.Warnf("Calling cleanupContainer() for %v", c.ID)
+			if err := daemon.cleanupContainer(c, true, true); err != nil {
 				logrus.Errorf("failed to cleanup container on create error: %v", err)
 			}
 		}
 	}()
 
-	if err := daemon.setSecurityOptions(container, params.HostConfig); err != nil {
-		return nil, err
-	}
-
-	container.HostConfig.StorageOpt = params.HostConfig.StorageOpt
-
-	// Set RWLayer for container after mount labels have been set
-	if err := daemon.setRWLayer(container); err != nil {
-		return nil, err
+	logrus.Warn("setRWLayer")
+	if err := daemon.setRWLayer(c); err != nil {
+		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
 	}
 
 	rootUID, rootGID, err := idtools.GetRootUIDGID(daemon.uidMaps, daemon.gidMaps)
 	if err != nil {
-		return nil, err
+		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
 	}
-	if err := idtools.MkdirAs(container.Root, 0700, rootUID, rootGID); err != nil {
-		return nil, err
+	if err := idtools.MkdirAs(c.Root, 0700, rootUID, rootGID); err != nil {
+		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
 	}
-	if err := idtools.MkdirAs(container.CheckpointDir(), 0700, rootUID, rootGID); err != nil {
-		return nil, err
-	}
-
-	if err := daemon.setHostConfig(container, params.HostConfig); err != nil {
-		return nil, err
+	if err := idtools.MkdirAs(c.CheckpointDir(), 0700, rootUID, rootGID); err != nil {
+		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
 	}
 
-	if err := daemon.createContainerPlatformSpecificSettings(container, params.Config, params.HostConfig); err != nil {
-		return nil, err
+	if err := daemon.setHostConfig(c, c.HostConfig); err != nil {
+		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
+	}
+
+	if err := daemon.createContainerPlatformSpecificSettings(c, c.Config, c.HostConfig); err != nil {
+		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
 	}
 
 	var endpointsConfigs map[string]*networktypes.EndpointSettings
@@ -143,17 +149,22 @@ func (daemon *Daemon) create(params types.ContainerCreateConfig, managed bool) (
 	}
 	// Make sure NetworkMode has an acceptable value. We do this to ensure
 	// backwards API compatibility.
-	container.HostConfig = runconfig.SetDefaultNetModeIfBlank(container.HostConfig)
+	c.HostConfig = runconfig.SetDefaultNetModeIfBlank(c.HostConfig)
 
-	daemon.updateContainerNetworkSettings(container, endpointsConfigs)
+	daemon.updateContainerNetworkSettings(c, endpointsConfigs)
 
-	if err := container.ToDisk(); err != nil {
+	logrus.Warn("ToDisk()")
+	if err := c.ToDisk(); err != nil {
 		logrus.Errorf("Error saving new container to disk: %v", err)
-		return nil, err
+		return containertypes.ContainerCreateCreatedBody{Warnings: warnings}, err
 	}
-	daemon.Register(container)
-	daemon.LogContainerEvent(container, "create")
-	return container, nil
+	logrus.Warn("Register():", c.ID)
+	logrus.Warnf("Register(): %#v", c)
+	daemon.Register(c)
+	daemon.LogContainerEvent(c, "create")
+	containerActions.WithValues("create").UpdateSince(start)
+
+	return containertypes.ContainerCreateCreatedBody{ID: c.ID, Warnings: warnings}, nil
 }
 
 func (daemon *Daemon) generateSecurityOpt(ipcMode containertypes.IpcMode, pidMode containertypes.PidMode, privileged bool) ([]string, error) {

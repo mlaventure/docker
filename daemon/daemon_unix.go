@@ -49,12 +49,7 @@ import (
 )
 
 const (
-	// See https://git.kernel.org/cgit/linux/kernel/git/tip/tip.git/tree/kernel/sched/sched.h?id=8cd9234c64c584432f6992fe944ca9e46ca8ea76#n269
-	linuxMinCPUShares = 2
-	linuxMaxCPUShares = 262144
 	platformSupported = true
-	// It's not kernel limit, we want this 4M limit to supply a reasonable functional container
-	linuxMinMemory = 4194304
 	// constants for remapped root settings
 	defaultIDSpecifier string = "default"
 	defaultRemappedID  string = "dockremap"
@@ -62,6 +57,13 @@ const (
 	// constant for cgroup drivers
 	cgroupFsDriver      = "cgroupfs"
 	cgroupSystemdDriver = "systemd"
+
+	// See https://git.kernel.org/cgit/linux/kernel/git/tip/tip.git/tree/kernel/sched/sched.h?id=8cd9234c64c584432f6992fe944ca9e46ca8ea76#n269
+	linuxMinCPUShares = 2
+	linuxMaxCPUShares = 262144
+
+	// It's not kernel limit, we want this 4M limit to supply a reasonable functional container
+	linuxMinMemory = 4194304
 )
 
 func getMemoryResources(config containertypes.Resources) *specs.Memory {
@@ -1295,4 +1297,37 @@ func (daemon *Daemon) setupSeccompProfile() error {
 		daemon.seccompProfile = b
 	}
 	return nil
+}
+
+func (daemon *Daemon) getPlatformContainerOptions(hostConfig *containertypes.HostConfig, config *containertypes.Config) (options []container.Option, err error) {
+	if hostConfig == nil {
+		return nil, nil
+	}
+
+	if hostConfig.Runtime == "" {
+		hostConfig.Runtime = daemon.configStore.GetDefaultRuntimeName()
+	}
+
+	if rt := daemon.configStore.GetRuntime(hostConfig.Runtime); rt == nil {
+		return nil, errors.Errorf("Unknown runtime specified %s", hostConfig.Runtime)
+	}
+
+	if UsingSystemd(daemon.configStore) {
+		options = append(options, container.WithSystemd())
+	}
+
+	if daemon.configStore.RemappedRoot != "" {
+		options = append(options, container.WithUserNS())
+	}
+
+	secOpts, err := daemon.generateSecurityOpt(hostConfig.IpcMode, hostConfig.PidMode, hostConfig.Privileged)
+	if err == nil && len(secOpts) > 0 {
+		options = append(options, container.WithSecurityOpt(secOpts))
+	}
+
+	if daemon.configStore != nil {
+		options = append(options, container.WithDefaultShmSize(int64(daemon.configStore.ShmSize)))
+	}
+
+	return
 }

@@ -15,7 +15,6 @@ import (
 	"github.com/docker/docker/layer"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/parsers/kernel"
-	"github.com/docker/docker/pkg/sysinfo"
 	refstore "github.com/docker/docker/reference"
 	"github.com/docker/libnetwork"
 	nwconfig "github.com/docker/libnetwork/config"
@@ -105,200 +104,9 @@ func (daemon *Daemon) getCgroupDriver() string {
 	return ""
 }
 
-func (daemon *Daemon) adaptContainerSettings(hostConfig *containertypes.HostConfig, adjustCPUShares bool) error {
-	if hostConfig.CPUShares < 0 {
-		logrus.Warnf("Changing requested CPUShares of %d to minimum allowed of %d", hostConfig.CPUShares, solarisMinCPUShares)
-		hostConfig.CPUShares = solarisMinCPUShares
-	} else if hostConfig.CPUShares > solarisMaxCPUShares {
-		logrus.Warnf("Changing requested CPUShares of %d to maximum allowed of %d", hostConfig.CPUShares, solarisMaxCPUShares)
-		hostConfig.CPUShares = solarisMaxCPUShares
-	}
-
-	if hostConfig.Memory > 0 && hostConfig.MemorySwap == 0 {
-		// By default, MemorySwap is set to twice the size of Memory.
-		hostConfig.MemorySwap = hostConfig.Memory * 2
-	}
-
-	if hostConfig.ShmSize != 0 {
-		hostConfig.ShmSize = container.DefaultSHMSize
-	}
-	if hostConfig.OomKillDisable == nil {
-		defaultOomKillDisable := false
-		hostConfig.OomKillDisable = &defaultOomKillDisable
-	}
-
-	return nil
-}
-
 // UsingSystemd returns true if cli option includes native.cgroupdriver=systemd
 func UsingSystemd(config *Config) bool {
 	return false
-}
-
-// verifyPlatformContainerSettings performs platform-specific validation of the
-// hostconfig and config structures.
-func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *containertypes.HostConfig, config *containertypes.Config, update bool) ([]string, error) {
-	warnings := []string{}
-	sysInfo := sysinfo.New(true)
-	// NOTE: We do not enforce a minimum value for swap limits for zones on Solaris and
-	// therefore we will not do that for Docker container either.
-	if hostConfig.Memory > 0 && !sysInfo.MemoryLimit {
-		warnings = append(warnings, "Your kernel does not support memory limit capabilities. Limitation discarded.")
-		logrus.Warnf("Your kernel does not support memory limit capabilities. Limitation discarded.")
-		hostConfig.Memory = 0
-		hostConfig.MemorySwap = -1
-	}
-	if hostConfig.Memory > 0 && hostConfig.MemorySwap != -1 && !sysInfo.SwapLimit {
-		warnings = append(warnings, "Your kernel does not support swap limit capabilities, memory limited without swap.")
-		logrus.Warnf("Your kernel does not support swap limit capabilities, memory limited without swap.")
-		hostConfig.MemorySwap = -1
-	}
-	if hostConfig.Memory > 0 && hostConfig.MemorySwap > 0 && hostConfig.MemorySwap < hostConfig.Memory {
-		return warnings, fmt.Errorf("Minimum memoryswap limit should be larger than memory limit, see usage.")
-	}
-	// Solaris NOTE: We allow and encourage setting the swap without setting the memory limit.
-
-	if hostConfig.MemorySwappiness != nil && *hostConfig.MemorySwappiness != -1 && !sysInfo.MemorySwappiness {
-		warnings = append(warnings, "Your kernel does not support memory swappiness capabilities, memory swappiness discarded.")
-		logrus.Warnf("Your kernel does not support memory swappiness capabilities, memory swappiness discarded.")
-		hostConfig.MemorySwappiness = nil
-	}
-	if hostConfig.MemoryReservation > 0 && !sysInfo.MemoryReservation {
-		warnings = append(warnings, "Your kernel does not support memory soft limit capabilities. Limitation discarded.")
-		logrus.Warnf("Your kernel does not support memory soft limit capabilities. Limitation discarded.")
-		hostConfig.MemoryReservation = 0
-	}
-	if hostConfig.Memory > 0 && hostConfig.MemoryReservation > 0 && hostConfig.Memory < hostConfig.MemoryReservation {
-		return warnings, fmt.Errorf("Minimum memory limit should be larger than memory reservation limit, see usage.")
-	}
-	if hostConfig.KernelMemory > 0 && !sysInfo.KernelMemory {
-		warnings = append(warnings, "Your kernel does not support kernel memory limit capabilities. Limitation discarded.")
-		logrus.Warnf("Your kernel does not support kernel memory limit capabilities. Limitation discarded.")
-		hostConfig.KernelMemory = 0
-	}
-	if hostConfig.CPUShares != 0 && !sysInfo.CPUShares {
-		warnings = append(warnings, "Your kernel does not support CPU shares. Shares discarded.")
-		logrus.Warnf("Your kernel does not support CPU shares. Shares discarded.")
-		hostConfig.CPUShares = 0
-	}
-	if hostConfig.CPUShares < 0 {
-		warnings = append(warnings, "Invalid CPUShares value. Must be positive. Discarding.")
-		logrus.Warnf("Invalid CPUShares value. Must be positive. Discarding.")
-		hostConfig.CPUQuota = 0
-	}
-	if hostConfig.CPUShares > 0 && !sysinfo.IsCPUSharesAvailable() {
-		warnings = append(warnings, "Global zone default scheduling class not FSS. Discarding shares.")
-		logrus.Warnf("Global zone default scheduling class not FSS. Discarding shares.")
-		hostConfig.CPUShares = 0
-	}
-
-	// Solaris NOTE: Linux does not do negative checking for CPUShares and Quota here. But it makes sense to.
-	if hostConfig.CPUPeriod > 0 && !sysInfo.CPUCfsPeriod {
-		warnings = append(warnings, "Your kernel does not support CPU cfs period. Period discarded.")
-		logrus.Warnf("Your kernel does not support CPU cfs period. Period discarded.")
-		if hostConfig.CPUQuota > 0 {
-			warnings = append(warnings, "Quota will be applied on default period, not period specified.")
-			logrus.Warnf("Quota will be applied on default period, not period specified.")
-		}
-		hostConfig.CPUPeriod = 0
-	}
-	if hostConfig.CPUQuota != 0 && !sysInfo.CPUCfsQuota {
-		warnings = append(warnings, "Your kernel does not support CPU cfs quota. Quota discarded.")
-		logrus.Warnf("Your kernel does not support CPU cfs quota. Quota discarded.")
-		hostConfig.CPUQuota = 0
-	}
-	if hostConfig.CPUQuota < 0 {
-		warnings = append(warnings, "Invalid CPUQuota value. Must be positive. Discarding.")
-		logrus.Warnf("Invalid CPUQuota value. Must be positive. Discarding.")
-		hostConfig.CPUQuota = 0
-	}
-	if (hostConfig.CpusetCpus != "" || hostConfig.CpusetMems != "") && !sysInfo.Cpuset {
-		warnings = append(warnings, "Your kernel does not support cpuset. Cpuset discarded.")
-		logrus.Warnf("Your kernel does not support cpuset. Cpuset discarded.")
-		hostConfig.CpusetCpus = ""
-		hostConfig.CpusetMems = ""
-	}
-	cpusAvailable, err := sysInfo.IsCpusetCpusAvailable(hostConfig.CpusetCpus)
-	if err != nil {
-		return warnings, fmt.Errorf("Invalid value %s for cpuset cpus.", hostConfig.CpusetCpus)
-	}
-	if !cpusAvailable {
-		return warnings, fmt.Errorf("Requested CPUs are not available - requested %s, available: %s.", hostConfig.CpusetCpus, sysInfo.Cpus)
-	}
-	memsAvailable, err := sysInfo.IsCpusetMemsAvailable(hostConfig.CpusetMems)
-	if err != nil {
-		return warnings, fmt.Errorf("Invalid value %s for cpuset mems.", hostConfig.CpusetMems)
-	}
-	if !memsAvailable {
-		return warnings, fmt.Errorf("Requested memory nodes are not available - requested %s, available: %s.", hostConfig.CpusetMems, sysInfo.Mems)
-	}
-	if hostConfig.BlkioWeight > 0 && !sysInfo.BlkioWeight {
-		warnings = append(warnings, "Your kernel does not support Block I/O weight. Weight discarded.")
-		logrus.Warnf("Your kernel does not support Block I/O weight. Weight discarded.")
-		hostConfig.BlkioWeight = 0
-	}
-	if hostConfig.OomKillDisable != nil && !sysInfo.OomKillDisable {
-		*hostConfig.OomKillDisable = false
-		// Don't warn; this is the default setting but only applicable to Linux
-	}
-
-	if sysInfo.IPv4ForwardingDisabled {
-		warnings = append(warnings, "IPv4 forwarding is disabled. Networking will not work.")
-		logrus.Warnf("IPv4 forwarding is disabled. Networking will not work")
-	}
-
-	// Solaris NOTE: We do not allow setting Linux specific options, so check and warn for all of them.
-
-	if hostConfig.CapAdd != nil || hostConfig.CapDrop != nil {
-		warnings = append(warnings, "Adding or dropping kernel capabilities unsupported on Solaris.Discarding capabilities lists.")
-		logrus.Warnf("Adding or dropping kernel capabilities unsupported on Solaris.Discarding capabilities lists.")
-		hostConfig.CapAdd = nil
-		hostConfig.CapDrop = nil
-	}
-
-	if hostConfig.GroupAdd != nil {
-		warnings = append(warnings, "Additional groups unsupported on Solaris.Discarding groups lists.")
-		logrus.Warnf("Additional groups unsupported on Solaris.Discarding groups lists.")
-		hostConfig.GroupAdd = nil
-	}
-
-	if hostConfig.IpcMode != "" {
-		warnings = append(warnings, "IPC namespace assignment unsupported on Solaris.Discarding IPC setting.")
-		logrus.Warnf("IPC namespace assignment unsupported on Solaris.Discarding IPC setting.")
-		hostConfig.IpcMode = ""
-	}
-
-	if hostConfig.PidMode != "" {
-		warnings = append(warnings, "PID namespace setting  unsupported on Solaris. Running container in host PID namespace.")
-		logrus.Warnf("PID namespace setting  unsupported on Solaris. Running container in host PID namespace.")
-		hostConfig.PidMode = ""
-	}
-
-	if hostConfig.Privileged {
-		warnings = append(warnings, "Privileged mode unsupported on Solaris. Discarding privileged mode setting.")
-		logrus.Warnf("Privileged mode unsupported on Solaris. Discarding privileged mode setting.")
-		hostConfig.Privileged = false
-	}
-
-	if hostConfig.UTSMode != "" {
-		warnings = append(warnings, "UTS namespace assignment unsupported on Solaris.Discarding UTS setting.")
-		logrus.Warnf("UTS namespace assignment unsupported on Solaris.Discarding UTS setting.")
-		hostConfig.UTSMode = ""
-	}
-
-	if hostConfig.CgroupParent != "" {
-		warnings = append(warnings, "Specifying Cgroup parent unsupported on Solaris. Discarding cgroup parent setting.")
-		logrus.Warnf("Specifying Cgroup parent unsupported on Solaris. Discarding cgroup parent setting.")
-		hostConfig.CgroupParent = ""
-	}
-
-	if hostConfig.Ulimits != nil {
-		warnings = append(warnings, "Specifying ulimits unsupported on Solaris. Discarding ulimits setting.")
-		logrus.Warnf("Specifying ulimits unsupported on Solaris. Discarding ulimits setting.")
-		hostConfig.Ulimits = nil
-	}
-
-	return warnings, nil
 }
 
 // platformReload updates configuration with platform specific options
@@ -520,4 +328,8 @@ func setupDaemonProcess(config *Config) error {
 
 func (daemon *Daemon) setupSeccompProfile() error {
 	return nil
+}
+
+func (daemon *Daemon) getPlatformContainerOptions(hostConfig *containertypes.HostConfig, config *containertypes.Config) (options []container.Option, err error) {
+	return
 }

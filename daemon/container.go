@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api/errors"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/strslice"
@@ -35,15 +36,18 @@ func (daemon *Daemon) GetContainer(prefixOrName string) (*container.Container, e
 		// prefix is an exact match to a full container ID
 		return containerByID, nil
 	}
+	logrus.Warnf("failed to Get container with %v", prefixOrName)
 
 	// GetByName will match only an exact name provided; we ignore errors
 	if containerByName, _ := daemon.GetByName(prefixOrName); containerByName != nil {
 		// prefix is an exact match to a full container Name
 		return containerByName, nil
 	}
+	logrus.Warnf("failed to Get container by name %v", prefixOrName)
 
 	containerID, indexError := daemon.idIndex.Get(prefixOrName)
 	if indexError != nil {
+		logrus.Warnf("failed to Get container by idindex %v", prefixOrName)
 		// When truncindex defines an error type, use that instead
 		if indexError == truncindex.ErrNotExist {
 			err := fmt.Errorf("No such container: %s", prefixOrName)

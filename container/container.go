@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	networktypes "github.com/docker/docker/api/types/network"
 	swarmtypes "github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/container/stream"
+	daemonconfig "github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/daemon/exec"
 	"github.com/docker/docker/daemon/logger"
 	"github.com/docker/docker/daemon/logger/jsonfilelog"
@@ -33,6 +35,7 @@ import (
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/signal"
 	"github.com/docker/docker/pkg/symlink"
+	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/restartmanager"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/volume"
@@ -44,6 +47,7 @@ import (
 	"github.com/docker/libnetwork/types"
 	agentexec "github.com/docker/swarmkit/agent/exec"
 	"github.com/opencontainers/runc/libcontainer/label"
+	"github.com/pkg/errors"
 )
 
 const configFileName = "config.v2.json"
@@ -96,6 +100,155 @@ type CommonContainer struct {
 	attachContext  *attachContext
 }
 
+// MergeContainerConfigs update config a with values from b when
+// they're not set
+func MergeContainerConfigs(a, b *containertypes.Config) error {
+	if a.User == "" {
+		a.User = b.User
+	}
+	if len(a.ExposedPorts) == 0 {
+		a.ExposedPorts = b.ExposedPorts
+	} else if b.ExposedPorts != nil {
+		for port := range b.ExposedPorts {
+			if _, exists := a.ExposedPorts[port]; !exists {
+				a.ExposedPorts[port] = struct{}{}
+			}
+		}
+	}
+
+	if len(a.Env) == 0 {
+		a.Env = b.Env
+	} else {
+		for _, imageEnv := range b.Env {
+			found := false
+			imageEnvKey := strings.Split(imageEnv, "=")[0]
+			for _, userEnv := range a.Env {
+				userEnvKey := strings.Split(userEnv, "=")[0]
+				if runtime.GOOS == "windows" {
+					// Case insensitive environment variables on Windows
+					imageEnvKey = strings.ToUpper(imageEnvKey)
+					userEnvKey = strings.ToUpper(userEnvKey)
+				}
+				if imageEnvKey == userEnvKey {
+					found = true
+					break
+				}
+			}
+			if !found {
+				a.Env = append(a.Env, imageEnv)
+			}
+		}
+	}
+
+	if a.Labels == nil {
+		a.Labels = map[string]string{}
+	}
+	for l, v := range b.Labels {
+		if _, ok := a.Labels[l]; !ok {
+			a.Labels[l] = v
+		}
+	}
+
+	if len(a.Entrypoint) == 0 {
+		if len(a.Cmd) == 0 {
+			a.Cmd = b.Cmd
+			a.ArgsEscaped = b.ArgsEscaped
+		}
+
+		if a.Entrypoint == nil {
+			a.Entrypoint = b.Entrypoint
+		}
+	}
+	if b.Healthcheck != nil {
+		if a.Healthcheck == nil {
+			a.Healthcheck = b.Healthcheck
+		} else {
+			if len(a.Healthcheck.Test) == 0 {
+				a.Healthcheck.Test = b.Healthcheck.Test
+			}
+			if a.Healthcheck.Interval == 0 {
+				a.Healthcheck.Interval = b.Healthcheck.Interval
+			}
+			if a.Healthcheck.Timeout == 0 {
+				a.Healthcheck.Timeout = b.Healthcheck.Timeout
+			}
+			if a.Healthcheck.Retries == 0 {
+				a.Healthcheck.Retries = b.Healthcheck.Retries
+			}
+		}
+	}
+
+	if a.WorkingDir == "" {
+		a.WorkingDir = b.WorkingDir
+	}
+	if len(a.Volumes) == 0 {
+		a.Volumes = b.Volumes
+	} else {
+		for k, v := range b.Volumes {
+			a.Volumes[k] = v
+		}
+	}
+
+	if a.StopSignal == "" {
+		a.StopSignal = b.StopSignal
+	}
+
+	return nil
+}
+
+type Option func(*Container) ([]string, error)
+
+func WithImage(img *image.Image) Option {
+	return func(c *Container) ([]string, error) {
+		c.ImageID = img.ID()
+		if img.Config == nil {
+			return nil, nil
+		}
+		return nil, MergeContainerConfigs(c.Config, img.Config)
+	}
+}
+
+func WithName(name string) Option {
+	return func(c *Container) ([]string, error) {
+		c.Name = name
+		return nil, nil
+	}
+}
+
+func WithManaged(managed bool) Option {
+	return func(c *Container) ([]string, error) {
+		c.Managed = managed
+		return nil, nil
+	}
+}
+
+func WithAnonymousEndpoint(anon bool) Option {
+	return func(c *Container) ([]string, error) {
+		if c.NetworkSettings == nil {
+			c.NetworkSettings = &network.Settings{}
+		}
+		c.NetworkSettings.IsAnonymousEndpoint = anon
+		return nil, nil
+	}
+}
+
+func WithGraphDriver(driver string) Option {
+	return func(c *Container) ([]string, error) {
+		c.Driver = driver
+		return nil, nil
+	}
+}
+
+func WithHostname(name string) Option {
+	return func(c *Container) ([]string, error) {
+		if c.Config == nil {
+			return nil, errors.Errorf("WithHostname() needs to be provided after WithConfig()")
+		}
+		c.Config.Hostname = name
+		return nil, nil
+	}
+}
+
 // NewBaseContainer creates a new container with its
 // basic configuration.
 func NewBaseContainer(id, root string) *Container {
@@ -110,6 +263,97 @@ func NewBaseContainer(id, root string) *Container {
 			attachContext: &attachContext{},
 		},
 	}
+}
+
+func New(id, root string, hostConfig *containertypes.HostConfig, config *containertypes.Config, opts ...Option) (*Container, []string, error) {
+	var warnings []string
+
+	c := &Container{
+		CommonContainer: CommonContainer{
+			ID:            id,
+			State:         NewState(),
+			ExecCommands:  exec.NewStore(),
+			Root:          root,
+			MountPoints:   make(map[string]*volume.MountPoint),
+			StreamConfig:  stream.NewConfig(),
+			attachContext: &attachContext{},
+		},
+	}
+
+	if hostConfig != nil {
+		w, err := validateHostConfig(hostConfig)
+		if err != nil {
+			warnings = append(warnings, w...)
+			return nil, warnings, err
+		}
+	} else {
+		hostConfig = &containertypes.HostConfig{}
+	}
+	c.HostConfig = hostConfig
+
+	c.Config = config
+	if config != nil {
+		w, err := validateContainerConfig(config)
+		if err != nil {
+			warnings = append(warnings, w...)
+			return nil, warnings, err
+		}
+	}
+
+	for _, o := range opts {
+		w, err := o(c)
+		if w != nil {
+			warnings = append(warnings, w...)
+		}
+		if err != nil {
+			return nil, warnings, err
+		}
+	}
+
+	// Set the defaults after all options have been processed
+	if err := c.setSecurityOption(c.HostConfig.SecurityOpt); err != nil {
+		return nil, warnings, err
+	}
+
+	if hostConfig.ShmSize == 0 {
+		hostConfig.ShmSize = daemonconfig.DefaultShmSize
+	}
+
+	// Reset the Entrypoint if it is [""]
+	if len(c.Config.Entrypoint) == 1 && c.Config.Entrypoint[0] == "" {
+		config.Entrypoint = nil
+	}
+
+	if len(c.Config.Entrypoint) == 0 && len(c.Config.Cmd) == 0 {
+		return nil, warnings, fmt.Errorf("no command specified")
+	}
+
+	if len(c.Config.Entrypoint) != 0 {
+		c.Path = c.Config.Entrypoint[0]
+		c.Args = append(c.Config.Entrypoint[1:], c.Config.Cmd...)
+	} else {
+		c.Path = c.Config.Cmd[0]
+		c.Args = c.Config.Cmd[1:]
+	}
+
+	if c.Config.Hostname == "" {
+		if hostConfig.NetworkMode.IsHost() {
+			n, err := os.Hostname()
+			if err != nil {
+				return nil, warnings, errors.Wrap(err, "failed to retrieve hostname")
+			}
+			c.Config.Hostname = n
+		}
+	}
+
+	return c, warnings, nil
+
+}
+
+func (container *Container) SetSecurityOption(opts []string) error {
+	container.Lock()
+	defer container.Unlock()
+	return container.setSecurityOption(opts)
 }
 
 // FromDisk loads the container configuration stored in the host.
@@ -931,4 +1175,101 @@ func (container *Container) InitializeStdio(iop libcontainerd.IOPipe) error {
 	}
 
 	return nil
+}
+
+func validateHostConfig(config *containertypes.HostConfig) (warnings []string, err error) {
+	if config == nil {
+		return
+	}
+
+	if config.AutoRemove && !config.RestartPolicy.IsNone() {
+		err = errors.Errorf("can't create 'AutoRemove' container with restart policy")
+		return
+	}
+
+	for port := range config.PortBindings {
+		_, portStr := nat.SplitProtoPort(string(port))
+		if _, err := nat.ParsePort(portStr); err != nil {
+			err = errors.Errorf("invalid port specification: %q", portStr)
+		}
+		for _, pb := range config.PortBindings[port] {
+			_, err = nat.NewPort(nat.SplitProtoPort(pb.HostPort))
+			if err != nil {
+				err = errors.Errorf("invalid port specification: %q", pb.HostPort)
+				return
+			}
+		}
+	}
+
+	rp := config.RestartPolicy
+
+	switch rp.Name {
+	case "always", "unless-stopped", "no":
+		if rp.MaximumRetryCount != 0 {
+			err = errors.Errorf("maximum retry count cannot be used with restart policy '%s'", rp.Name)
+			return
+		}
+	case "on-failure":
+		if rp.MaximumRetryCount < 0 {
+			err = errors.Errorf("maximum retry count cannot be negative")
+			return
+		}
+	case "":
+		// do nothing
+	default:
+		err = errors.Errorf("invalid restart policy '%s'", rp.Name)
+		return
+	}
+
+	return validatePlatformHostConfig(config)
+}
+
+func validateContainerConfig(config *containertypes.Config) (warnings []string, err error) {
+	if config == nil {
+		return nil, nil
+	}
+
+	if config.WorkingDir != "" {
+		config.WorkingDir = filepath.FromSlash(config.WorkingDir) // Ensure in platform semantics
+		if !system.IsAbs(config.WorkingDir) {
+			err = errors.Errorf("the working directory '%s' is invalid, it needs to be an absolute path",
+				config.WorkingDir)
+			return
+		}
+	}
+
+	if len(config.StopSignal) > 0 {
+		_, err = signal.ParseSignal(config.StopSignal)
+		if err != nil {
+			err = errors.Wrap(err, "failed to parse stop signal")
+			return
+		}
+	}
+
+	// Validate if Env contains empty variable or not (e.g., ``, `=foo`)
+	for _, env := range config.Env {
+		if _, err = opts.ValidateEnv(env); err != nil {
+			return
+		}
+	}
+
+	// Validate the healthcheck params of Config
+	if config.Healthcheck != nil {
+		if config.Healthcheck.Interval != 0 && config.Healthcheck.Interval < time.Second {
+			err = errors.Errorf("Interval in Healthcheck cannot be less than one second")
+			return
+		}
+
+		if config.Healthcheck.Timeout != 0 && config.Healthcheck.Timeout < time.Second {
+			err = errors.Errorf("Timeout in Healthcheck cannot be less than one second")
+			return
+		}
+
+		if config.Healthcheck.Retries < 0 {
+			err = errors.Errorf("Retries in Healthcheck cannot be negative")
+			return
+		}
+	}
+
+	return validatePlatformContainerConfig(config)
 }
