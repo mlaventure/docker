@@ -15,6 +15,27 @@ import (
 	"github.com/pkg/errors"
 )
 
+var newJournal = sdjournal.NewJournal
+
+type Journal interface {
+	AddMatch(match string) error
+	SetDataThreshold(threshold uint64) error
+
+	SeekHead() error
+	SeekTail() error
+	PreviousSkip(skip uint64) (uint64, error)
+
+	Next() (uint64, error)
+	Previous() (uint64, error)
+	GetEntry() (*sdjournal.JournalEntry, error)
+	GetRealtimeUsec() (uint64, error)
+	SeekRealtimeUsec(usec uint64) error
+
+	Wait(timeout time.Duration) int
+
+	Close() error
+}
+
 func (s *journald) Close() error {
 	s.mu.Lock()
 	for _, r := range s.readers {
@@ -32,7 +53,7 @@ func (s *journald) ReadLogs(config logger.ReadConfig) *logger.LogWatcher {
 
 func (s *journald) readLogs(logWatcher *logger.LogWatcher, config logger.ReadConfig) {
 	var (
-		j   *sdjournal.Journal
+		j   Journal
 		err error
 	)
 
@@ -89,8 +110,8 @@ func (s *journald) readLogs(logWatcher *logger.LogWatcher, config logger.ReadCon
 	}
 }
 
-func newSDJournal(logWatcher *logger.LogWatcher, config logger.ReadConfig, match string) (j *sdjournal.Journal, err error) {
-	if j, err = sdjournal.NewJournal(); err != nil {
+func newSDJournal(logWatcher *logger.LogWatcher, config logger.ReadConfig, match string) (j Journal, err error) {
+	if j, err = newJournal(); err != nil {
 		err = errors.Wrap(err, "failed to open journal")
 		return
 	}
@@ -207,14 +228,14 @@ var knownFields = map[string]struct{}{
 	"CONTAINER_TAG":     struct{}{},
 }
 
-func readAllEntries(ctx context.Context, j *sdjournal.Journal, logWatcher *logger.LogWatcher) error {
+func readAllEntries(ctx context.Context, j Journal, logWatcher *logger.LogWatcher) error {
 	for {
 		select {
 		case <-ctx.Done():
 			// TODO: test for regression: https://github.com/docker/docker/pull/29863
 			return nil
 		default:
-			//  read next entry
+			// go on and read next entry
 		}
 
 		more, err := j.Next()
@@ -231,10 +252,13 @@ func readAllEntries(ctx context.Context, j *sdjournal.Journal, logWatcher *logge
 			return errors.Wrap(err, "failed to get journal entry")
 		}
 
-		filteredFields := make(map[string]string)
+		attrs := make(map[string]string)
 		for k, v := range ent.Fields {
+			if k[0] == '_' {
+				continue
+			}
 			if _, ok := knownFields[k]; !ok {
-				filteredFields[k] = v
+				attrs[k] = v
 			}
 		}
 
@@ -260,7 +284,7 @@ func readAllEntries(ctx context.Context, j *sdjournal.Journal, logWatcher *logge
 			Line:      []byte(line),
 			Source:    source,
 			Timestamp: time.Unix(int64(ent.RealtimeTimestamp)/1000000, (int64(ent.RealtimeTimestamp)%1000000)*1000),
-			Attrs:     filteredFields,
+			Attrs:     attrs,
 		}
 	}
 }
