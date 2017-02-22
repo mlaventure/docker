@@ -2,409 +2,265 @@
 
 package journald
 
-// #include <sys/types.h>
-// #include <sys/poll.h>
-// #include <systemd/sd-journal.h>
-// #include <errno.h>
-// #include <stdio.h>
-// #include <stdlib.h>
-// #include <string.h>
-// #include <time.h>
-// #include <unistd.h>
-//
-//static int get_message(sd_journal *j, const char **msg, size_t *length, int *partial)
-//{
-//	int rc;
-//	size_t plength;
-//	*msg = NULL;
-//	*length = 0;
-//	plength = strlen("CONTAINER_PARTIAL_MESSAGE=true");
-//	rc = sd_journal_get_data(j, "CONTAINER_PARTIAL_MESSAGE", (const void **) msg, length);
-//	*partial = ((rc == 0) && (*length == plength) && (memcmp(*msg, "CONTAINER_PARTIAL_MESSAGE=true", plength) == 0));
-//	rc = sd_journal_get_data(j, "MESSAGE", (const void **) msg, length);
-//	if (rc == 0) {
-//		if (*length > 8) {
-//			(*msg) += 8;
-//			*length -= 8;
-//		} else {
-//			*msg = NULL;
-//			*length = 0;
-//			rc = -ENOENT;
-//		}
-//	}
-//	return rc;
-//}
-//static int get_priority(sd_journal *j, int *priority)
-//{
-//	const void *data;
-//	size_t i, length;
-//	int rc;
-//	*priority = -1;
-//	rc = sd_journal_get_data(j, "PRIORITY", &data, &length);
-//	if (rc == 0) {
-//		if ((length > 9) && (strncmp(data, "PRIORITY=", 9) == 0)) {
-//			*priority = 0;
-//			for (i = 9; i < length; i++) {
-//				*priority = *priority * 10 + ((const char *)data)[i] - '0';
-//			}
-//			if (length > 9) {
-//				rc = 0;
-//			}
-//		}
-//	}
-//	return rc;
-//}
-//static int is_attribute_field(const char *msg, size_t length)
-//{
-//	static const struct known_field {
-//		const char *name;
-//		size_t length;
-//	} fields[] = {
-//		{"MESSAGE", sizeof("MESSAGE") - 1},
-//		{"MESSAGE_ID", sizeof("MESSAGE_ID") - 1},
-//		{"PRIORITY", sizeof("PRIORITY") - 1},
-//		{"CODE_FILE", sizeof("CODE_FILE") - 1},
-//		{"CODE_LINE", sizeof("CODE_LINE") - 1},
-//		{"CODE_FUNC", sizeof("CODE_FUNC") - 1},
-//		{"ERRNO", sizeof("ERRNO") - 1},
-//		{"SYSLOG_FACILITY", sizeof("SYSLOG_FACILITY") - 1},
-//		{"SYSLOG_IDENTIFIER", sizeof("SYSLOG_IDENTIFIER") - 1},
-//		{"SYSLOG_PID", sizeof("SYSLOG_PID") - 1},
-//		{"CONTAINER_NAME", sizeof("CONTAINER_NAME") - 1},
-//		{"CONTAINER_ID", sizeof("CONTAINER_ID") - 1},
-//		{"CONTAINER_ID_FULL", sizeof("CONTAINER_ID_FULL") - 1},
-//		{"CONTAINER_TAG", sizeof("CONTAINER_TAG") - 1},
-//	};
-//	unsigned int i;
-//	void *p;
-//	if ((length < 1) || (msg[0] == '_') || ((p = memchr(msg, '=', length)) == NULL)) {
-//		return -1;
-//	}
-//	length = ((const char *) p) - msg;
-//	for (i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
-//		if ((fields[i].length == length) && (memcmp(fields[i].name, msg, length) == 0)) {
-//			return -1;
-//		}
-//	}
-//	return 0;
-//}
-//static int get_attribute_field(sd_journal *j, const char **msg, size_t *length)
-//{
-//	int rc;
-//	*msg = NULL;
-//	*length = 0;
-//	while ((rc = sd_journal_enumerate_data(j, (const void **) msg, length)) > 0) {
-//		if (is_attribute_field(*msg, *length) == 0) {
-//			break;
-//		}
-//		rc = -ENOENT;
-//	}
-//	return rc;
-//}
-//static int wait_for_data_cancelable(sd_journal *j, int pipefd)
-//{
-//	struct pollfd fds[2];
-//	uint64_t when = 0;
-//	int timeout, jevents, i;
-//	struct timespec ts;
-//	uint64_t now;
-//
-//	memset(&fds, 0, sizeof(fds));
-//	fds[0].fd = pipefd;
-//	fds[0].events = POLLHUP;
-//	fds[1].fd = sd_journal_get_fd(j);
-//	if (fds[1].fd < 0) {
-//		return fds[1].fd;
-//	}
-//
-//	do {
-//		jevents = sd_journal_get_events(j);
-//		if (jevents < 0) {
-//			return jevents;
-//		}
-//		fds[1].events = jevents;
-//		sd_journal_get_timeout(j, &when);
-//		if (when == -1) {
-//			timeout = -1;
-//		} else {
-//			clock_gettime(CLOCK_MONOTONIC, &ts);
-//			now = (uint64_t) ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
-//			timeout = when > now ? (int) ((when - now + 999) / 1000) : 0;
-//		}
-//		i = poll(fds, 2, timeout);
-//		if ((i == -1) && (errno != EINTR)) {
-//			/* An unexpected error. */
-//			return (errno != 0) ? -errno : -EINTR;
-//		}
-//		if (fds[0].revents & POLLHUP) {
-//			/* The close notification pipe was closed. */
-//			return 0;
-//		}
-//		if (sd_journal_process(j) == SD_JOURNAL_APPEND) {
-//			/* Data, which we might care about, was appended. */
-//			return 1;
-//		}
-//	} while ((fds[0].revents & POLLHUP) == 0);
-//	return 0;
-//}
-import "C"
-
 import (
-	"fmt"
-	"strings"
+	"context"
+	"io"
+	"strconv"
+	"syscall"
 	"time"
-	"unsafe"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/coreos/go-systemd/journal"
+	"github.com/coreos/go-systemd/sdjournal"
 	"github.com/docker/docker/daemon/logger"
+	"github.com/pkg/errors"
 )
 
 func (s *journald) Close() error {
-	s.readers.mu.Lock()
-	for reader := range s.readers.readers {
-		reader.Close()
+	s.mu.Lock()
+	for _, r := range s.readers {
+		r.Close()
 	}
-	s.readers.mu.Unlock()
+	s.mu.Unlock()
 	return nil
-}
-
-func (s *journald) drainJournal(logWatcher *logger.LogWatcher, config logger.ReadConfig, j *C.sd_journal, oldCursor *C.char) *C.char {
-	var msg, data, cursor *C.char
-	var length C.size_t
-	var stamp C.uint64_t
-	var priority, partial C.int
-
-	// Walk the journal from here forward until we run out of new entries.
-drain:
-	for {
-		// Try not to send a given entry twice.
-		if oldCursor != nil {
-			for C.sd_journal_test_cursor(j, oldCursor) > 0 {
-				if C.sd_journal_next(j) <= 0 {
-					break drain
-				}
-			}
-		}
-		// Read and send the logged message, if there is one to read.
-		i := C.get_message(j, &msg, &length, &partial)
-		if i != -C.ENOENT && i != -C.EADDRNOTAVAIL {
-			// Read the entry's timestamp.
-			if C.sd_journal_get_realtime_usec(j, &stamp) != 0 {
-				break
-			}
-			// Set up the time and text of the entry.
-			timestamp := time.Unix(int64(stamp)/1000000, (int64(stamp)%1000000)*1000)
-			line := C.GoBytes(unsafe.Pointer(msg), C.int(length))
-			if partial == 0 {
-				line = append(line, "\n"...)
-			}
-			// Recover the stream name by mapping
-			// from the journal priority back to
-			// the stream that we would have
-			// assigned that value.
-			source := ""
-			if C.get_priority(j, &priority) != 0 {
-				source = ""
-			} else if priority == C.int(journal.PriErr) {
-				source = "stderr"
-			} else if priority == C.int(journal.PriInfo) {
-				source = "stdout"
-			}
-			// Retrieve the values of any variables we're adding to the journal.
-			attrs := make(map[string]string)
-			C.sd_journal_restart_data(j)
-			for C.get_attribute_field(j, &data, &length) > C.int(0) {
-				kv := strings.SplitN(C.GoStringN(data, C.int(length)), "=", 2)
-				attrs[kv[0]] = kv[1]
-			}
-			if len(attrs) == 0 {
-				attrs = nil
-			}
-			// Send the log message.
-			logWatcher.Msg <- &logger.Message{
-				Line:      line,
-				Source:    source,
-				Timestamp: timestamp.In(time.UTC),
-				Attrs:     attrs,
-			}
-		}
-		// If we're at the end of the journal, we're done (for now).
-		if C.sd_journal_next(j) <= 0 {
-			break
-		}
-	}
-
-	// free(NULL) is safe
-	C.free(unsafe.Pointer(oldCursor))
-	C.sd_journal_get_cursor(j, &cursor)
-	return cursor
-}
-
-func (s *journald) followJournal(logWatcher *logger.LogWatcher, config logger.ReadConfig, j *C.sd_journal, pfd [2]C.int, cursor *C.char) *C.char {
-	s.readers.mu.Lock()
-	s.readers.readers[logWatcher] = logWatcher
-	s.readers.mu.Unlock()
-
-	go func() {
-		for {
-			// Keep copying journal data out until we're notified to stop
-			// or we hit an error.
-			status := C.wait_for_data_cancelable(j, pfd[0])
-			if status < 0 {
-				cerrstr := C.strerror(C.int(-status))
-				errstr := C.GoString(cerrstr)
-				fmtstr := "error %q while attempting to follow journal for container %q"
-				logrus.Errorf(fmtstr, errstr, s.vars["CONTAINER_ID_FULL"])
-				break
-			}
-
-			cursor = s.drainJournal(logWatcher, config, j, cursor)
-
-			if status != 1 {
-				// We were notified to stop
-				break
-			}
-		}
-
-		// Clean up.
-		C.close(pfd[0])
-		s.readers.mu.Lock()
-		delete(s.readers.readers, logWatcher)
-		s.readers.mu.Unlock()
-		C.sd_journal_close(j)
-		close(logWatcher.Msg)
-	}()
-
-	// Wait until we're told to stop.
-	select {
-	case <-logWatcher.WatchClose():
-		// Notify the other goroutine that its work is done.
-		C.close(pfd[1])
-	}
-
-	return cursor
-}
-
-func (s *journald) readLogs(logWatcher *logger.LogWatcher, config logger.ReadConfig) {
-	var j *C.sd_journal
-	var cmatch, cursor *C.char
-	var stamp C.uint64_t
-	var sinceUnixMicro uint64
-	var pipes [2]C.int
-
-	// Get a handle to the journal.
-	rc := C.sd_journal_open(&j, C.int(0))
-	if rc != 0 {
-		logWatcher.Err <- fmt.Errorf("error opening journal")
-		close(logWatcher.Msg)
-		return
-	}
-	// If we end up following the log, we can set the journal context
-	// pointer and the channel pointer to nil so that we won't close them
-	// here, potentially while the goroutine that uses them is still
-	// running.  Otherwise, close them when we return from this function.
-	following := false
-	defer func(pfollowing *bool) {
-		if !*pfollowing {
-			C.sd_journal_close(j)
-			close(logWatcher.Msg)
-		}
-	}(&following)
-	// Remove limits on the size of data items that we'll retrieve.
-	rc = C.sd_journal_set_data_threshold(j, C.size_t(0))
-	if rc != 0 {
-		logWatcher.Err <- fmt.Errorf("error setting journal data threshold")
-		return
-	}
-	// Add a match to have the library do the searching for us.
-	cmatch = C.CString("CONTAINER_ID_FULL=" + s.vars["CONTAINER_ID_FULL"])
-	defer C.free(unsafe.Pointer(cmatch))
-	rc = C.sd_journal_add_match(j, unsafe.Pointer(cmatch), C.strlen(cmatch))
-	if rc != 0 {
-		logWatcher.Err <- fmt.Errorf("error setting journal match")
-		return
-	}
-	// If we have a cutoff time, convert it to Unix time once.
-	if !config.Since.IsZero() {
-		nano := config.Since.UnixNano()
-		sinceUnixMicro = uint64(nano / 1000)
-	}
-	if config.Tail > 0 {
-		lines := config.Tail
-		// Start at the end of the journal.
-		if C.sd_journal_seek_tail(j) < 0 {
-			logWatcher.Err <- fmt.Errorf("error seeking to end of journal")
-			return
-		}
-		if C.sd_journal_previous(j) < 0 {
-			logWatcher.Err <- fmt.Errorf("error backtracking to previous journal entry")
-			return
-		}
-		// Walk backward.
-		for lines > 0 {
-			// Stop if the entry time is before our cutoff.
-			// We'll need the entry time if it isn't, so go
-			// ahead and parse it now.
-			if C.sd_journal_get_realtime_usec(j, &stamp) != 0 {
-				break
-			} else {
-				// Compare the timestamp on the entry
-				// to our threshold value.
-				if sinceUnixMicro != 0 && sinceUnixMicro > uint64(stamp) {
-					break
-				}
-			}
-			lines--
-			// If we're at the start of the journal, or
-			// don't need to back up past any more entries,
-			// stop.
-			if lines == 0 || C.sd_journal_previous(j) <= 0 {
-				break
-			}
-		}
-	} else {
-		// Start at the beginning of the journal.
-		if C.sd_journal_seek_head(j) < 0 {
-			logWatcher.Err <- fmt.Errorf("error seeking to start of journal")
-			return
-		}
-		// If we have a cutoff date, fast-forward to it.
-		if sinceUnixMicro != 0 && C.sd_journal_seek_realtime_usec(j, C.uint64_t(sinceUnixMicro)) != 0 {
-			logWatcher.Err <- fmt.Errorf("error seeking to start time in journal")
-			return
-		}
-		if C.sd_journal_next(j) < 0 {
-			logWatcher.Err <- fmt.Errorf("error skipping to next journal entry")
-			return
-		}
-	}
-	cursor = s.drainJournal(logWatcher, config, j, nil)
-	if config.Follow {
-		// Allocate a descriptor for following the journal, if we'll
-		// need one.  Do it here so that we can report if it fails.
-		if fd := C.sd_journal_get_fd(j); fd < C.int(0) {
-			logWatcher.Err <- fmt.Errorf("error opening journald follow descriptor: %q", C.GoString(C.strerror(-fd)))
-		} else {
-			// Create a pipe that we can poll at the same time as
-			// the journald descriptor.
-			if C.pipe(&pipes[0]) == C.int(-1) {
-				logWatcher.Err <- fmt.Errorf("error opening journald close notification pipe")
-			} else {
-				cursor = s.followJournal(logWatcher, config, j, pipes, cursor)
-				// Let followJournal handle freeing the journal context
-				// object and closing the channel.
-				following = true
-			}
-		}
-	}
-
-	C.free(unsafe.Pointer(cursor))
-	return
 }
 
 func (s *journald) ReadLogs(config logger.ReadConfig) *logger.LogWatcher {
 	logWatcher := logger.NewLogWatcher()
 	go s.readLogs(logWatcher, config)
 	return logWatcher
+}
+
+func (s *journald) readLogs(logWatcher *logger.LogWatcher, config logger.ReadConfig) {
+	var (
+		j   *sdjournal.Journal
+		err error
+	)
+
+	defer func() {
+		if err != nil {
+			logWatcher.Err <- err
+		}
+		close(logWatcher.Msg)
+	}()
+
+	j, err = newSDJournal(logWatcher, config, "CONTAINER_ID_FULL="+s.vars["CONTAINER_ID_FULL"])
+	if err != nil {
+		return
+	}
+	defer j.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-logWatcher.WatchClose()
+		cancel()
+	}()
+
+	if config.Follow {
+		s.mu.Lock()
+		s.readers = append(s.readers, logWatcher)
+		s.mu.Unlock()
+	}
+
+	for {
+		err = readAllEntries(ctx, j, logWatcher)
+		if err != nil && err != io.EOF {
+			return
+		}
+
+		if !config.Follow || err == nil {
+			err = nil // it may be io.EOF
+			return
+		}
+
+		// We need to wait for new entries
+		event := sdjournal.SD_JOURNAL_NOP
+		for event == sdjournal.SD_JOURNAL_NOP {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				event = j.Wait(time.Duration(1 * time.Second))
+				if event < 0 {
+					err = errors.Errorf("error while waiting for new entries, errno: %v", syscall.Errno(-event))
+					return
+				}
+			}
+		}
+	}
+}
+
+func newSDJournal(logWatcher *logger.LogWatcher, config logger.ReadConfig, match string) (j *sdjournal.Journal, err error) {
+	if j, err = sdjournal.NewJournal(); err != nil {
+		err = errors.Wrap(err, "failed to open journal")
+		return
+	}
+	defer func() {
+		if err != nil {
+			j.Close()
+		}
+	}()
+
+	if err = j.SetDataThreshold(0); err != nil {
+		err = errors.Wrap(err, "failed to set journal data threshold")
+		return
+	}
+
+	if err = j.AddMatch(match); err != nil {
+		err = errors.Wrap(err, "failed to set journal match")
+		return
+	}
+
+	if config.Tail > 0 {
+		if err = j.SeekTail(); err != nil {
+			err = errors.Wrap(err, "failed to seek to end of journal")
+			return
+		}
+
+		var skip, target uint64
+		target = uint64(config.Tail + 1)
+		if skip, err = j.PreviousSkip(target); err != nil {
+			err = errors.Wrap(err, "failed to skip tail entries")
+			return
+		}
+
+		// If we made it to the beginning of the journal, reset the
+		// head so the next read gets the first line
+		if skip != target {
+			if err = j.SeekHead(); err != nil {
+				err = errors.Wrap(err, "failed to seek to journal start")
+				return
+			}
+		}
+
+		// If we have a timestamp check that we are honoring it
+		if !config.Since.IsZero() {
+			sinceTs := uint64(config.Since.UnixNano() / 1000)
+			if sinceTs != 0 {
+				var (
+					usec uint64
+					more uint64
+				)
+
+				more, err = j.Next()
+				if err != nil {
+					err = errors.Wrap(err, "failed to advance to next entry while checking tail timestamp")
+					return
+				}
+
+				if more != 0 {
+					if usec, err = j.GetRealtimeUsec(); err != nil {
+						err = errors.Wrap(err, "failed to get current entry timestamp")
+						return
+					}
+
+					if usec < sinceTs {
+						if err = j.SeekRealtimeUsec(sinceTs); err != nil {
+							err = errors.Wrapf(err, "failed to seek to time %v", config.Since)
+							return
+						}
+					} else {
+						// timestamp is all good, go back where we were
+						_, err = j.Previous()
+						if err != nil {
+							err = errors.Wrap(err, "failed to advance to previous entry")
+							return
+						}
+					}
+				}
+			}
+		}
+	} else {
+		if err = j.SeekHead(); err != nil {
+			err = errors.Wrap(err, "failed to seek to journal start")
+			return
+		}
+
+		// If we have a timestamp honor it
+		if !config.Since.IsZero() {
+			sinceTs := uint64(config.Since.UnixNano() / 1000)
+			if sinceTs != 0 {
+				if err = j.SeekRealtimeUsec(sinceTs); err != nil {
+					err = errors.Wrapf(err, "failed to seek to time %v", config.Since)
+					return
+				}
+			}
+		}
+	}
+
+	return
+}
+
+var knownFields = map[string]struct{}{
+	"MESSAGE":           struct{}{},
+	"MESSAGE_ID":        struct{}{},
+	"PRIORITY":          struct{}{},
+	"CODE_FILE":         struct{}{},
+	"CODE_LINE":         struct{}{},
+	"CODE_FUNC":         struct{}{},
+	"ERRNO":             struct{}{},
+	"SYSLOG_FACILITY":   struct{}{},
+	"SYSLOG_IDENTIFIER": struct{}{},
+	"SYSLOG_PID":        struct{}{},
+	"CONTAINER_NAME":    struct{}{},
+	"CONTAINER_ID":      struct{}{},
+	"CONTAINER_ID_FULL": struct{}{},
+	"CONTAINER_TAG":     struct{}{},
+}
+
+func readAllEntries(ctx context.Context, j *sdjournal.Journal, logWatcher *logger.LogWatcher) error {
+	for {
+		select {
+		case <-ctx.Done():
+			// TODO: test for regression: https://github.com/docker/docker/pull/29863
+			return nil
+		default:
+			//  read next entry
+		}
+
+		more, err := j.Next()
+		if err != nil {
+			return errors.Wrap(err, "failed to advance to next entry")
+		}
+
+		if more == 0 {
+			return io.EOF
+		}
+
+		ent, err := j.GetEntry()
+		if err != nil {
+			return errors.Wrap(err, "failed to get journal entry")
+		}
+
+		filteredFields := make(map[string]string)
+		for k, v := range ent.Fields {
+			if _, ok := knownFields[k]; !ok {
+				filteredFields[k] = v
+			}
+		}
+
+		source := ""
+		if prioStr := ent.Fields["PRIORITY"]; prioStr != "" {
+			prio, err := strconv.Atoi(prioStr)
+			switch {
+			case err != nil:
+				// ignore
+			case prio == int(journal.PriErr):
+				source = "stderr"
+			case prio == int(journal.PriInfo):
+				source = "stdout"
+			}
+		}
+
+		line := ent.Fields["MESSAGE"]
+		if _, ok := ent.Fields["CONTAINER_PARTIAL_MESSAGE"]; !ok {
+			line += "\n"
+		}
+
+		logWatcher.Msg <- &logger.Message{
+			Line:      []byte(line),
+			Source:    source,
+			Timestamp: time.Unix(int64(ent.RealtimeTimestamp)/1000000, (int64(ent.RealtimeTimestamp)%1000000)*1000),
+			Attrs:     filteredFields,
+		}
+	}
 }
