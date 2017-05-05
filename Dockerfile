@@ -70,6 +70,7 @@ RUN apt-get update && apt-get install -y \
 	vim-common \
 	xfsprogs \
 	zip \
+	lsof \
 	--no-install-recommends \
 	&& pip install awscli==1.10.15
 # Get lvm2 source for compiling statically

@@ -697,7 +697,7 @@ func (daemon *Daemon) createSpec(c *container.Container) (*specs.Spec, error) {
 		if err != nil {
 			return nil, err
 		}
-		p = filepath.Join(initPath, p)
+		p = filepath.Join(initPath, s.Linux.CgroupsPath)
 	}
 
 	// Clean path to guard against things like ../../../BAD

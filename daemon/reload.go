@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/daemon/discovery"
-	"github.com/docker/docker/libcontainerd"
 	"github.com/sirupsen/logrus"
 )
 
@@ -36,6 +36,16 @@ func (daemon *Daemon) Reload(conf *config.Config) (err error) {
 			daemon.LogDaemonEventWithAttributes("reload", attributes)
 		}
 	}()
+
+	if conf.IsValueSet("runtimes") {
+		daemon.configStore.Runtimes = conf.Runtimes
+		// Always set the default one
+		daemon.configStore.Runtimes[config.StockRuntimeName] = types.Runtime{Path: DefaultRuntimeName}
+	}
+
+	if conf.DefaultRuntime != "" {
+		daemon.configStore.DefaultRuntime = conf.DefaultRuntime
+	}
 
 	daemon.reloadPlatform(conf, attributes)
 	daemon.reloadDebug(conf, attributes)
@@ -301,9 +311,6 @@ func (daemon *Daemon) reloadLiveRestore(conf *config.Config, attributes map[stri
 	// update corresponding configuration
 	if conf.IsValueSet("live-restore") {
 		daemon.configStore.LiveRestoreEnabled = conf.LiveRestoreEnabled
-		if err := daemon.containerdRemote.UpdateOptions(libcontainerd.WithLiveRestore(conf.LiveRestoreEnabled)); err != nil {
-			return err
-		}
 	}
 
 	// prepare reload event attributes with updatable configurations

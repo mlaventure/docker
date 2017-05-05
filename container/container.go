@@ -116,7 +116,7 @@ type Container struct {
 func NewBaseContainer(id, root string) *Container {
 	return &Container{
 		ID:            id,
-		State:         NewState(),
+		State:         NewState(id),
 		ExecCommands:  exec.NewStore(),
 		Root:          root,
 		MountPoints:   make(map[string]*volume.MountPoint),

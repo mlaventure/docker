@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/daemon/config"
 	"github.com/docker/docker/image"
+	"github.com/docker/docker/libcontainerd"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/pkg/parsers"
@@ -654,4 +655,8 @@ func getRealPath(path string) (string, error) {
 		return path, nil
 	}
 	return fileutils.ReadSymlinkedDirectory(path)
+}
+
+func getPlatformRemoteOptions(config *config.Config) ([]libcontainerd.RemoteOption, error) {
+	return nil, nil
 }

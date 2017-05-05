@@ -198,7 +198,11 @@ func (cli *DaemonCli) start(opts *daemonOptions) (err error) {
 	}
 
 	registryService := registry.NewService(cli.Config.ServiceOptions)
-	containerdRemote, err := libcontainerd.New(cli.getLibcontainerdRoot(), cli.getPlatformRemoteOptions()...)
+	rOpts, err := cli.getRemoteOptions()
+	if err != nil {
+		return fmt.Errorf("Failed to generate containerd options: %s", err)
+	}
+	containerdRemote, err := libcontainerd.New(filepath.Join(cli.Config.Root, "containerd"), filepath.Join(cli.Config.ExecRoot, "containerd"), rOpts...)
 	if err != nil {
 		return err
 	}
@@ -556,6 +560,25 @@ func (cli *DaemonCli) initMiddlewares(s *apiserver.Server, cfg *apiserver.Config
 	cli.Config.AuthzMiddleware = cli.authzMiddleware
 	s.UseMiddleware(cli.authzMiddleware)
 	return nil
+}
+
+func (cli *DaemonCli) getRemoteOptions() ([]libcontainerd.RemoteOption, error) {
+	opts := []libcontainerd.RemoteOption{}
+	if cli.Config.Debug {
+		opts = append(opts, libcontainerd.WithLogLevel("debug"))
+	}
+	if cli.Config.ContainerdAddr != "" {
+		opts = append(opts, libcontainerd.WithRemoteAddr(cli.Config.ContainerdAddr))
+	} else {
+		opts = append(opts, libcontainerd.WithStartDaemon(true))
+	}
+
+	pOpts, err := cli.getPlatformRemoteOptions()
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, pOpts...)
+	return opts, nil
 }
 
 // validates that the plugins requested with the --authorization-plugin flag are valid AuthzDriver

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -8,12 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"google.golang.org/grpc"
-
 	apierrors "github.com/docker/docker/api/errors"
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/container"
+	"github.com/docker/docker/libcontainerd"
 	"github.com/sirupsen/logrus"
 )
 
@@ -147,6 +148,21 @@ func (daemon *Daemon) containerStart(container *container.Container, checkpoint 
 		return err
 	}
 
+	// Ensure a runtime has been assigned to this container
+	if container.HostConfig.Runtime == "" {
+		container.HostConfig.Runtime = daemon.configStore.GetDefaultRuntimeName()
+		if err := container.CheckpointTo(daemon.containersReplica); err != nil {
+			return err
+		}
+	}
+
+	rt := daemon.configStore.GetRuntime(container.HostConfig.Runtime)
+	if rt == nil {
+		return fmt.Errorf("no such runtime '%s'", container.HostConfig.Runtime)
+	}
+	// TODO: figure out how to handle the multiple runtime functionality from old docker
+	createOptions = append(createOptions, libcontainerd.WithRuntime(rt.Path))
+
 	if resetRestartManager {
 		container.ResetRestartManager(true)
 	}
@@ -159,33 +175,26 @@ func (daemon *Daemon) containerStart(container *container.Container, checkpoint 
 		return err
 	}
 
-	if err := daemon.containerd.Create(container.ID, checkpoint, checkpointDir, *spec, container.InitializeStdio, createOptions...); err != nil {
-		errDesc := grpc.ErrorDesc(err)
-		contains := func(s1, s2 string) bool {
-			return strings.Contains(strings.ToLower(s1), s2)
-		}
+	err = daemon.containerd.Create(context.Background(), container.ID,
+		spec, createOptions...)
+	if err != nil {
+		errDesc := createOrStartContainerErrorProcessing(container, err)
 		logrus.Errorf("Create container failed with error: %s", errDesc)
-		// if we receive an internal error from the initial start of a container then lets
-		// return it instead of entering the restart loop
-		// set to 127 for container cmd not found/does not exist)
-		if contains(errDesc, container.Path) &&
-			(contains(errDesc, "executable file not found") ||
-				contains(errDesc, "no such file or directory") ||
-				contains(errDesc, "system cannot find the file specified")) {
-			container.SetExitCode(127)
-		}
-		// set to 126 for container cmd can't be invoked errors
-		if contains(errDesc, syscall.EACCES.Error()) {
-			container.SetExitCode(126)
-		}
+		return errors.New(errDesc)
+	}
 
-		// attempted to mount a file onto a directory, or a directory onto a file, maybe from user specified bind mounts
-		if contains(errDesc, syscall.ENOTDIR.Error()) {
-			errDesc += ": Are you trying to mount a directory onto a file (or vice-versa)? Check if the specified host path exists and is the expected type"
-			container.SetExitCode(127)
-		}
+	_, err = daemon.containerd.Start(context.Background(), container.ID,
+		container.StreamConfig.Stdin() != nil || container.Config.Tty,
+		container.InitializeStdio)
+	if err != nil {
+		errDesc := createOrStartContainerErrorProcessing(container, err)
+		logrus.Errorf("Starting container failed with error: %s", errDesc)
+		return errors.New(errDesc)
+	}
 
-		return fmt.Errorf("%s", errDesc)
+	// Need to save to disk here, since NetworkSettings was probably updated
+	if err := container.CheckpointTo(daemon.containersReplica); err != nil {
+		return err
 	}
 
 	containerActions.WithValues("start").UpdateSince(start)
@@ -221,5 +230,39 @@ func (daemon *Daemon) Cleanup(container *container.Container) {
 			logrus.Warnf("%s cleanup: Failed to umount volumes: %v", container.ID, err)
 		}
 	}
+
 	container.CancelAttachContext()
+
+	if err := daemon.containerd.Delete(context.Background(), container.ID); err != nil {
+		logrus.Errorf("%s cleanup: failed to delete container from containerd: %v", container.ID, err)
+	}
+}
+
+func createOrStartContainerErrorProcessing(c *container.Container, err error) string {
+	contains := func(s1, s2 string) bool {
+		return strings.Contains(strings.ToLower(s1), s2)
+	}
+
+	errDesc := err.Error()
+	// if we receive an internal error from the initial start of a container then lets
+	// return it instead of entering the restart loop
+	// set to 127 for container cmd not found/does not exist)
+	if contains(errDesc, c.Path) &&
+		(contains(errDesc, "executable file not found") ||
+			contains(errDesc, "no such file or directory") ||
+			contains(errDesc, "system cannot find the file specified")) {
+		c.SetExitCode(127)
+	}
+	// set to 126 for container cmd can't be invoked errors
+	if contains(errDesc, syscall.EACCES.Error()) {
+		c.SetExitCode(126)
+	}
+
+	// attempted to mount a file onto a directory, or a directory onto a file, maybe from user specified bind mounts
+	if contains(errDesc, syscall.ENOTDIR.Error()) {
+		errDesc += ": Are you trying to mount a directory onto a file (or vice-versa)? Check if the specified host path exists and is the expected type"
+		c.SetExitCode(127)
+	}
+
+	return errDesc
 }

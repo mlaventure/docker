@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/docker/docker/container"
@@ -41,8 +42,17 @@ func (daemon *Daemon) containerPause(container *container.Container) error {
 		return errContainerIsRestarting(container.ID)
 	}
 
-	if err := daemon.containerd.Pause(container.ID); err != nil {
+	if err := daemon.containerd.Pause(context.Background(), container.ID); err != nil {
 		return fmt.Errorf("Cannot pause container %s: %s", container.ID, err)
+	}
+
+	container.Paused = true
+	daemon.setStateCounter(container)
+	daemon.updateHealthMonitor(container)
+	daemon.LogContainerEvent(container, "pause")
+
+	if err := container.CheckpointTo(daemon.containersReplica); err != nil {
+		return err
 	}
 
 	return nil

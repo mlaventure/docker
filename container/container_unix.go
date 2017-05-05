@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
@@ -34,6 +35,9 @@ type ExitStatus struct {
 
 	// Whether the container encountered an OOM.
 	OOMKilled bool
+
+	// Time at which the container died
+	ExitedAt time.Time
 }
 
 // TrySetNetworkMount attempts to set the network mounts given a provided destination and
@@ -185,7 +189,9 @@ func (container *Container) UnmountIpcMounts(unmount func(pth string) error) {
 			logrus.Error(err)
 			warnings = append(warnings, err.Error())
 		} else if shmPath != "" {
+			logrus.Debugf("Unmounting SHM for %s @ %s", container.ID, shmPath)
 			if err := unmount(shmPath); err != nil && !os.IsNotExist(err) {
+				logrus.Debugf("failed to unmount %s: %v", shmPath, err)
 				if mounted, mErr := mount.Mounted(shmPath); mounted || mErr != nil {
 					warnings = append(warnings, fmt.Sprintf("failed to umount %s: %v", shmPath, err))
 				}

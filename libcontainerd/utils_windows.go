@@ -1,6 +1,9 @@
 package libcontainerd
 
-import "strings"
+import (
+	"strings"
+	"syscall"
+)
 
 // setupEnvironmentVariables converts a string array of environment variables
 // into a map as required by the HCS. Source array is in format [v1=k1] [v2=k2] etc.
@@ -42,5 +45,11 @@ func (s *NetworkEndpointsOption) Apply(interface{}) error {
 
 // Apply for the credentials option is a no-op.
 func (s *CredentialsOption) Apply(interface{}) error {
+	return nil
+}
+
+// containerdSysProcAttr returns the SysProcAttr to use when exec'ing
+// containerd
+func containerdSysProcAttr() *syscall.SysProcAttr {
 	return nil
 }

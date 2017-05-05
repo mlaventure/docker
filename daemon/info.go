@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -136,6 +137,14 @@ func (daemon *Daemon) SystemInfo() (*types.Info, error) {
 		LiveRestoreEnabled: daemon.configStore.LiveRestoreEnabled,
 		SecurityOptions:    securityOptions,
 		Isolation:          daemon.defaultIsolation,
+	}
+
+	v.ContainerdCommit.Expected = dockerversion.ContainerdCommitID
+	if _, err := daemon.containerd.GetServerVersion(context.Background()); err == nil {
+		//v.ContainerdCommit.ID = sv.Revision
+	} else {
+		logrus.Warnf("failed to retrieve containerd version: %v", err)
+		v.ContainerdCommit.ID = "N/A"
 	}
 
 	// Retrieve platform specific info

@@ -5,6 +5,7 @@ package daemon
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -37,7 +38,6 @@ import (
 	"github.com/docker/libnetwork/netutils"
 	"github.com/docker/libnetwork/options"
 	lntypes "github.com/docker/libnetwork/types"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/opencontainers/runc/libcontainer/cgroups"
 	rsystem "github.com/opencontainers/runc/libcontainer/system"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -49,6 +49,14 @@ import (
 )
 
 const (
+	// DefaultRuntimeBinary is the default shim to be used by
+	// containerd if none is specified
+	DefaultShimBinary = "docker-containerd-shim"
+
+	// DefaultRuntimeBinary is the default runtime to be used by
+	// containerd if none is specified
+	DefaultRuntimeBinary = "docker-runc"
+
 	// See https://git.kernel.org/cgit/linux/kernel/git/tip/tip.git/tree/kernel/sched/sched.h?id=8cd9234c64c584432f6992fe944ca9e46ca8ea76#n269
 	linuxMinCPUShares = 2
 	linuxMaxCPUShares = 262144
@@ -62,6 +70,10 @@ const (
 	// constant for cgroup drivers
 	cgroupFsDriver      = "cgroupfs"
 	cgroupSystemdDriver = "systemd"
+
+	// DefaultRuntimeName is the default runtime to be used by
+	// containerd if none is specified
+	DefaultRuntimeName = "linux"
 )
 
 func getMemoryResources(config containertypes.Resources) *specs.LinuxMemory {
@@ -582,16 +594,6 @@ func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *containertypes.
 // reloadPlatform updates configuration with platform specific options
 // and updates the passed attributes
 func (daemon *Daemon) reloadPlatform(conf *config.Config, attributes map[string]string) {
-	if conf.IsValueSet("runtimes") {
-		daemon.configStore.Runtimes = conf.Runtimes
-		// Always set the default one
-		daemon.configStore.Runtimes[config.StockRuntimeName] = types.Runtime{Path: DefaultRuntimeBinary}
-	}
-
-	if conf.DefaultRuntime != "" {
-		daemon.configStore.DefaultRuntime = conf.DefaultRuntime
-	}
-
 	if conf.IsValueSet("default-shm-size") {
 		daemon.configStore.ShmSize = conf.ShmSize
 	}
@@ -637,7 +639,7 @@ func verifyDaemonSettings(conf *config.Config) error {
 	if conf.Runtimes == nil {
 		conf.Runtimes = make(map[string]types.Runtime)
 	}
-	conf.Runtimes[config.StockRuntimeName] = types.Runtime{Path: DefaultRuntimeBinary}
+	conf.Runtimes[config.StockRuntimeName] = types.Runtime{Path: DefaultRuntimeName}
 
 	return nil
 }
@@ -1163,7 +1165,7 @@ func (daemon *Daemon) stats(c *container.Container) (*types.StatsJSON, error) {
 	if !c.IsRunning() {
 		return nil, errNotRunning{c.ID}
 	}
-	stats, err := daemon.containerd.Stats(c.ID)
+	_, err := daemon.containerd.Stats(context.Background(), c.ID)
 	if err != nil {
 		if strings.Contains(err.Error(), "container not found") {
 			return nil, errNotFound{c.ID}
@@ -1171,54 +1173,55 @@ func (daemon *Daemon) stats(c *container.Container) (*types.StatsJSON, error) {
 		return nil, err
 	}
 	s := &types.StatsJSON{}
-	cgs := stats.CgroupStats
-	if cgs != nil {
-		s.BlkioStats = types.BlkioStats{
-			IoServiceBytesRecursive: copyBlkioEntry(cgs.BlkioStats.IoServiceBytesRecursive),
-			IoServicedRecursive:     copyBlkioEntry(cgs.BlkioStats.IoServicedRecursive),
-			IoQueuedRecursive:       copyBlkioEntry(cgs.BlkioStats.IoQueuedRecursive),
-			IoServiceTimeRecursive:  copyBlkioEntry(cgs.BlkioStats.IoServiceTimeRecursive),
-			IoWaitTimeRecursive:     copyBlkioEntry(cgs.BlkioStats.IoWaitTimeRecursive),
-			IoMergedRecursive:       copyBlkioEntry(cgs.BlkioStats.IoMergedRecursive),
-			IoTimeRecursive:         copyBlkioEntry(cgs.BlkioStats.IoTimeRecursive),
-			SectorsRecursive:        copyBlkioEntry(cgs.BlkioStats.SectorsRecursive),
-		}
-		cpu := cgs.CpuStats
-		s.CPUStats = types.CPUStats{
-			CPUUsage: types.CPUUsage{
-				TotalUsage:        cpu.CpuUsage.TotalUsage,
-				PercpuUsage:       cpu.CpuUsage.PercpuUsage,
-				UsageInKernelmode: cpu.CpuUsage.UsageInKernelmode,
-				UsageInUsermode:   cpu.CpuUsage.UsageInUsermode,
-			},
-			ThrottlingData: types.ThrottlingData{
-				Periods:          cpu.ThrottlingData.Periods,
-				ThrottledPeriods: cpu.ThrottlingData.ThrottledPeriods,
-				ThrottledTime:    cpu.ThrottlingData.ThrottledTime,
-			},
-		}
-		mem := cgs.MemoryStats.Usage
-		s.MemoryStats = types.MemoryStats{
-			Usage:    mem.Usage,
-			MaxUsage: mem.MaxUsage,
-			Stats:    cgs.MemoryStats.Stats,
-			Failcnt:  mem.Failcnt,
-			Limit:    mem.Limit,
-		}
-		// if the container does not set memory limit, use the machineMemory
-		if mem.Limit > daemon.machineMemory && daemon.machineMemory > 0 {
-			s.MemoryStats.Limit = daemon.machineMemory
-		}
-		if cgs.PidsStats != nil {
-			s.PidsStats = types.PidsStats{
-				Current: cgs.PidsStats.Current,
-			}
-		}
-	}
-	s.Read, err = ptypes.Timestamp(stats.Timestamp)
-	if err != nil {
-		return nil, err
-	}
+	// TODO: implement stats
+	// cgs := stats.CgroupStats
+	// if cgs != nil {
+	// 	s.BlkioStats = types.BlkioStats{
+	// 		IoServiceBytesRecursive: copyBlkioEntry(cgs.BlkioStats.IoServiceBytesRecursive),
+	// 		IoServicedRecursive:     copyBlkioEntry(cgs.BlkioStats.IoServicedRecursive),
+	// 		IoQueuedRecursive:       copyBlkioEntry(cgs.BlkioStats.IoQueuedRecursive),
+	// 		IoServiceTimeRecursive:  copyBlkioEntry(cgs.BlkioStats.IoServiceTimeRecursive),
+	// 		IoWaitTimeRecursive:     copyBlkioEntry(cgs.BlkioStats.IoWaitTimeRecursive),
+	// 		IoMergedRecursive:       copyBlkioEntry(cgs.BlkioStats.IoMergedRecursive),
+	// 		IoTimeRecursive:         copyBlkioEntry(cgs.BlkioStats.IoTimeRecursive),
+	// 		SectorsRecursive:        copyBlkioEntry(cgs.BlkioStats.SectorsRecursive),
+	// 	}
+	// 	cpu := cgs.CpuStats
+	// 	s.CPUStats = types.CPUStats{
+	// 		CPUUsage: types.CPUUsage{
+	// 			TotalUsage:        cpu.CpuUsage.TotalUsage,
+	// 			PercpuUsage:       cpu.CpuUsage.PercpuUsage,
+	// 			UsageInKernelmode: cpu.CpuUsage.UsageInKernelmode,
+	// 			UsageInUsermode:   cpu.CpuUsage.UsageInUsermode,
+	// 		},
+	// 		ThrottlingData: types.ThrottlingData{
+	// 			Periods:          cpu.ThrottlingData.Periods,
+	// 			ThrottledPeriods: cpu.ThrottlingData.ThrottledPeriods,
+	// 			ThrottledTime:    cpu.ThrottlingData.ThrottledTime,
+	// 		},
+	// 	}
+	// 	mem := cgs.MemoryStats.Usage
+	// 	s.MemoryStats = types.MemoryStats{
+	// 		Usage:    mem.Usage,
+	// 		MaxUsage: mem.MaxUsage,
+	// 		Stats:    cgs.MemoryStats.Stats,
+	// 		Failcnt:  mem.Failcnt,
+	// 		Limit:    mem.Limit,
+	// 	}
+	// 	// if the container does not set memory limit, use the machineMemory
+	// 	if mem.Limit > daemon.machineMemory && daemon.machineMemory > 0 {
+	// 		s.MemoryStats.Limit = daemon.machineMemory
+	// 	}
+	// 	if cgs.PidsStats != nil {
+	// 		s.PidsStats = types.PidsStats{
+	// 			Current: cgs.PidsStats.Current,
+	// 		}
+	// 	}
+	// }
+	// s.Read, err = ptypes.Timestamp(stats.Timestamp)
+	// if err != nil {
+	// 	return nil, err
+	// }
 	return s, nil
 }
 

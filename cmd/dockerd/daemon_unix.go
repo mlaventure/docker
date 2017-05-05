@@ -35,6 +35,28 @@ func getDaemonConfDir(_ string) string {
 	return "/etc/docker"
 }
 
+func (cli *DaemonCli) getPlatformRemoteOptions() ([]libcontainerd.RemoteOption, error) {
+	opts := []libcontainerd.RemoteOption{
+		libcontainerd.WithOOMScore(cli.Config.OOMScoreAdjust),
+		libcontainerd.WithPlugin("linux", map[string]string{
+			"shim":    fmt.Sprintf(`"%s"`, daemon.DefaultShimBinary),
+			"runtime": fmt.Sprintf(`"%s"`, daemon.DefaultRuntimeBinary),
+			"debug":   fmt.Sprintf(`%t`, cli.Config.Debug),
+		},
+		),
+	}
+
+	// FIXME: handle mltiple runtime definition options somehow when
+	// creating the remote, we probably want to have them written within
+	// the config file for containerd
+	// if daemon.UsingSystemd(cli.Config) {
+	// 	args := []string{"--systemd-cgroup=true"}
+	// 	opts = append(opts, libcontainerd.WithRuntimeArgs(args))
+	// }
+
+	return opts, nil
+}
+
 // setupConfigReloadTrap configures the USR2 signal to reload the configuration.
 func (cli *DaemonCli) setupConfigReloadTrap() {
 	c := make(chan os.Signal, 1)
@@ -44,33 +66,6 @@ func (cli *DaemonCli) setupConfigReloadTrap() {
 			cli.reloadConfig()
 		}
 	}()
-}
-
-func (cli *DaemonCli) getPlatformRemoteOptions() []libcontainerd.RemoteOption {
-	opts := []libcontainerd.RemoteOption{
-		libcontainerd.WithDebugLog(cli.Config.Debug),
-		libcontainerd.WithOOMScore(cli.Config.OOMScoreAdjust),
-	}
-	if cli.Config.ContainerdAddr != "" {
-		opts = append(opts, libcontainerd.WithRemoteAddr(cli.Config.ContainerdAddr))
-	} else {
-		opts = append(opts, libcontainerd.WithStartDaemon(true))
-	}
-	if daemon.UsingSystemd(cli.Config) {
-		args := []string{"--systemd-cgroup=true"}
-		opts = append(opts, libcontainerd.WithRuntimeArgs(args))
-	}
-	if cli.Config.LiveRestoreEnabled {
-		opts = append(opts, libcontainerd.WithLiveRestore(true))
-	}
-	opts = append(opts, libcontainerd.WithRuntimePath(daemon.DefaultRuntimeBinary))
-	return opts
-}
-
-// getLibcontainerdRoot gets the root directory for libcontainerd/containerd to
-// store their state.
-func (cli *DaemonCli) getLibcontainerdRoot() string {
-	return filepath.Join(cli.Config.ExecRoot, "libcontainerd")
 }
 
 // getSwarmRunRoot gets the root directory for swarm to store runtime state

@@ -29,7 +29,7 @@ func TestIsValidHealthString(t *testing.T) {
 }
 
 func TestStateRunStop(t *testing.T) {
-	s := NewState()
+	s := NewState("test")
 
 	// Begin another wait with WaitConditionRemoved. It should complete
 	// within 200 milliseconds.
@@ -120,7 +120,7 @@ func TestStateRunStop(t *testing.T) {
 }
 
 func TestStateTimeoutWait(t *testing.T) {
-	s := NewState()
+	s := NewState("test")
 
 	s.Lock()
 	s.SetRunning(0, true)

@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"io/ioutil"
@@ -106,7 +107,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		return nil, errors.Wrapf(err, "failed to mkdir %v", manager.tmpDir())
 	}
 	var err error
-	manager.containerdClient, err = config.Executor.Client(manager) // todo: move to another struct
+	manager.containerdClient, err = config.Executor.NewClient("docker-plugins", manager) // todo: move to another struct
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create containerd client")
 	}
@@ -129,11 +130,15 @@ func (pm *Manager) tmpDir() string {
 }
 
 // StateChanged updates plugin internals using libcontainerd events.
-func (pm *Manager) StateChanged(id string, e libcontainerd.StateInfo) error {
-	logrus.Debugf("plugin state changed %s %#v", id, e)
+func (pm *Manager) ProcessEvent(id string, e libcontainerd.EventType, ei libcontainerd.EventInfo) error {
+	logrus.Debugf("plugin: event received %s - %v - %#v", id, e, ei)
 
-	switch e.State {
-	case libcontainerd.StateExit:
+	if e == libcontainerd.EventExit {
+		_, _, err := pm.containerdClient.DeleteTask(context.Background(), id)
+		if err != nil {
+			logrus.WithError(err).Warnf("failed to delete container plugin %s from containerd", id)
+		}
+
 		p, err := pm.config.Store.GetV2Plugin(id)
 		if err != nil {
 			return err
@@ -330,7 +335,11 @@ func (l logHook) Fire(entry *logrus.Entry) error {
 
 func attachToLog(id string) func(libcontainerd.IOPipe) error {
 	return func(iop libcontainerd.IOPipe) error {
-		iop.Stdin.Close()
+		if iop.Stdin != nil {
+			iop.Stdin.Close()
+			// closing stdin shouldn't be needed here, it should never be open
+			panic("Stdin shouldn't have been created!") // TODO(mlaventure): don't forget to remove
+		}
 
 		logger := logrus.New()
 		logger.Hooks.Add(logHook{id})

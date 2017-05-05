@@ -1,22 +1,10 @@
 package libcontainerd
 
-import (
-	"github.com/Microsoft/hcsshim"
-	"github.com/opencontainers/runtime-spec/specs-go"
-)
+import "github.com/Microsoft/hcsshim"
 
-// Process contains information to start a specific application inside the container.
-type Process specs.Process
-
-// Summary contains a ProcessList item from HCS to support `top`
-type Summary hcsshim.ProcessListItem
-
-// StateInfo contains description about the new state container has entered.
-type StateInfo struct {
-	CommonStateInfo
-
-	// Platform specific StateInfo
-	UpdatePending bool // Indicates that there are some update operations pending that should be completed by a servicing container.
+// Process contains information about a running process within a container
+type Process struct {
+	Pid uint32
 }
 
 // Stats contains statistics from HCS

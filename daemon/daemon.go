@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	containerd "github.com/containerd/containerd/api/grpc/types"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
@@ -62,10 +61,6 @@ import (
 )
 
 var (
-	// DefaultRuntimeBinary is the default runtime to be used by
-	// containerd if none is specified
-	DefaultRuntimeBinary = "docker-runc"
-
 	errSystemNotSupported = errors.New("The Docker daemon is not supported on this platform.")
 )
 
@@ -209,6 +204,15 @@ func (daemon *Daemon) restore() error {
 		}
 	}
 
+	containsAny := func(s string, candidate []string) bool {
+		for _, c := range candidate {
+			if strings.Contains(s, c) {
+				return true
+			}
+		}
+		return false
+	}
+
 	var wg sync.WaitGroup
 	var mapLock sync.Mutex
 	for _, c := range containers {
@@ -223,9 +227,21 @@ func (daemon *Daemon) restore() error {
 			daemon.setStateCounter(c)
 			if c.IsRunning() || c.IsPaused() {
 				c.RestartManager().Cancel() // manually start containers because some need to wait for swarm networking
-				if err := daemon.containerd.Restore(c.ID, c.InitializeStdio); err != nil {
-					logrus.Errorf("Failed to restore %s with containerd: %s", c.ID, err)
+				alive, _, err := daemon.containerd.Restore(context.Background(), c.ID, c.Config.OpenStdin || c.Config.Tty, c.Config.Tty, c.InitializeStdio)
+				if err != nil && !containsAny(err.Error(), []string{"container does not exist", "not found"}) {
+					logrus.Errorf("Failed to restore container %s with containerd: %s", c.ID, err)
 					return
+				}
+
+				if !alive {
+					ec, exitedAt, err := daemon.containerd.DeleteTask(context.Background(), c.ID)
+					if err != nil && !strings.Contains(err.Error(), "no such container") {
+						logrus.WithError(err).Errorf("Failed to delete container %s from containerd", c.ID)
+						return
+					}
+					// TODO: take care of OOMKilled here?
+					c.SetStopped(&container.ExitStatus{ExitCode: int(ec), ExitedAt: exitedAt})
+					daemon.Cleanup(c)
 				}
 
 				// we call Mount and then Unmount to get BaseFs of the container
@@ -785,13 +801,13 @@ func NewDaemon(config *config.Config, registryService registry.Service, containe
 	d.idMappings = idMappings
 	d.seccompEnabled = sysInfo.Seccomp
 	d.apparmorEnabled = sysInfo.AppArmor
+	d.containerdRemote = containerdRemote
 
 	d.linkIndex = newLinkIndex()
-	d.containerdRemote = containerdRemote
 
 	go d.execCommandGC()
 
-	d.containerd, err = containerdRemote.Client(d)
+	d.containerd, err = containerdRemote.NewClient("docker", d)
 	if err != nil {
 		return nil, err
 	}
@@ -1154,18 +1170,18 @@ func (daemon *Daemon) networkOptions(dconfig *config.Config, pg plugingetter.Plu
 	return options, nil
 }
 
-func copyBlkioEntry(entries []*containerd.BlkioStatsEntry) []types.BlkioStatEntry {
-	out := make([]types.BlkioStatEntry, len(entries))
-	for i, re := range entries {
-		out[i] = types.BlkioStatEntry{
-			Major: re.Major,
-			Minor: re.Minor,
-			Op:    re.Op,
-			Value: re.Value,
-		}
-	}
-	return out
-}
+// func copyBlkioEntry(entries []*containerd.BlkioStatsEntry) []types.BlkioStatEntry {
+// 	out := make([]types.BlkioStatEntry, len(entries))
+// 	for i, re := range entries {
+// 		out[i] = types.BlkioStatEntry{
+// 			Major: re.Major,
+// 			Minor: re.Minor,
+// 			Op:    re.Op,
+// 			Value: re.Value,
+// 		}
+// 	}
+// 	return out
+// }
 
 // GetCluster returns the cluster
 func (daemon *Daemon) GetCluster() Cluster {

@@ -33,7 +33,7 @@ const (
 	DefaultMaxConcurrentUploads = 5
 	// StockRuntimeName is the reserved name/alias used to represent the
 	// OCI runtime being shipped with the docker daemon package.
-	StockRuntimeName = "runc"
+	StockRuntimeName = "runc" // TODO: rename to "default"? May break some setup
 	// DefaultShmSize is the default value for container's shm size
 	DefaultShmSize = int64(67108864)
 	// DefaultNetworkMtu is the default value for network MTU

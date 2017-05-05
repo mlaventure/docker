@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker/pkg/reexec"
 	"github.com/go-check/check"
 	"golang.org/x/net/context"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -101,6 +102,16 @@ func (s *DockerSuite) OnTimeout(c *check.C) {
 
 func (s *DockerSuite) TearDownTest(c *check.C) {
 	testEnv.Clean(c, dockerBinary)
+	var (
+		ws   unix.WaitStatus
+		rus  unix.Rusage
+		flag = unix.WNOHANG
+	)
+	pid, _ := unix.Wait4(-1, &ws, flag, &rus)
+	if pid > 0 {
+		fmt.Printf("Wait4 reaped a PID (%v), please update your test to have it clean after itself properly\n", pid)
+		// os.Exit(1)
+	}
 }
 
 func init() {

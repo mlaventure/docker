@@ -9,6 +9,7 @@ import (
 	"time"
 
 	containerpkg "github.com/docker/docker/container"
+	"github.com/docker/docker/libcontainerd"
 	"github.com/docker/docker/pkg/signal"
 	"github.com/sirupsen/logrus"
 )
@@ -104,7 +105,7 @@ func (daemon *Daemon) killWithSignal(container *containerpkg.Container, sig int)
 
 	if unpause {
 		// above kill signal will be sent once resume is finished
-		if err := daemon.containerd.Resume(container.ID); err != nil {
+		if err := daemon.containerd.Resume(context.Background(), container.ID); err != nil {
 			logrus.Warn("Cannot unpause container %s: %s", container.ID, err)
 		}
 	}
@@ -173,5 +174,5 @@ func (daemon *Daemon) killPossiblyDeadProcess(container *containerpkg.Container,
 }
 
 func (daemon *Daemon) kill(c *containerpkg.Container, sig int) error {
-	return daemon.containerd.Signal(c.ID, sig)
+	return daemon.containerd.SignalProcess(context.Background(), c.ID, libcontainerd.InitProcessName, sig)
 }

@@ -3770,7 +3770,7 @@ func (s *DockerSuite) TestRunNonExistingCmd(c *check.C) {
 func (s *DockerSuite) TestCmdCannotBeInvoked(c *check.C) {
 	expected := 126
 	if testEnv.DaemonPlatform() == "windows" {
-		expected = 127
+		expected = 126
 	}
 	name := "testCmdCannotBeInvoked"
 	icmd.RunCommand(dockerBinary, "run", "--name", name, "busybox", "/etc").Assert(c, icmd.Expected{

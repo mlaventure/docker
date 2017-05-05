@@ -2,9 +2,11 @@ package system
 
 import (
 	"os"
+	"os/exec"
 	"syscall"
 	"time"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/pkg/errors"
 )
@@ -39,11 +41,13 @@ func EnsureRemoveAll(dir string) error {
 
 		pe, ok := err.(*os.PathError)
 		if !ok {
+			logrus.Debugf("EnsureRemoveAll (not PathError): dir: %s, %#v", dir, err)
 			return err
 		}
 
 		if os.IsNotExist(err) {
 			if notExistErr[pe.Path] {
+				logrus.Debugf("EnsureRemoveAll (not exist): path: %v: %v", pe.Path, err)
 				return err
 			}
 			notExistErr[pe.Path] = true
@@ -60,6 +64,7 @@ func EnsureRemoveAll(dir string) error {
 		}
 
 		if pe.Err != syscall.EBUSY {
+			logrus.Debugf("EnsureRemoveAll (not ebusy): path: %v: %v", pe.Path, err)
 			return err
 		}
 
@@ -72,6 +77,9 @@ func EnsureRemoveAll(dir string) error {
 		}
 
 		if exitOnErr[pe.Path] == maxRetry {
+			logrus.Debugf("EnsureRemoveAll (maxRetry reached): path: %v: %v", pe.Path, err)
+			out, err1 := exec.Command("lsof", "+D", pe.Path).CombinedOutput()
+			logrus.Debugf("LSOF %s output: %v\n %s", pe.Path, err1, string(out))
 			return err
 		}
 		exitOnErr[pe.Path]++

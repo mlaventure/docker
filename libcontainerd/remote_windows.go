@@ -1,36 +1,59 @@
 package libcontainerd
 
-import "github.com/docker/docker/pkg/locker"
+import (
+	"io/ioutil"
+	"log"
+	"net"
+	"time"
 
-type remote struct {
-}
+	"github.com/Microsoft/go-winio"
+	"github.com/pkg/errors"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/grpclog"
+)
 
-func (r *remote) Client(b Backend) (Client, error) {
-	c := &client{
-		clientCommon: clientCommon{
-			backend:    b,
-			containers: make(map[string]*container),
-			locker:     locker.New(),
-		},
+const (
+	pipeName      = `\\.\pipe\containerd-containerd`
+	debugPipeName = `\\.\pipe\containerd-debug`
+)
+
+func (r *remote) setDefaults() {
+	if r.rpcAddr == "" {
+		r.rpcAddr = pipeName
 	}
-	return c, nil
+	if r.debugRPCAddr == "" {
+		r.debugRPCAddr = debugPipeName
+	}
+	if r.snapshotter == "" {
+		r.snapshotter = "naive" // TODO: switch to "windows" once implemented
+	}
+	if r.logLevel == "" {
+		r.logLevel = "info"
+	}
 }
 
-// Cleanup is a no-op on Windows. It is here to implement the interface.
-func (r *remote) Cleanup() {
+func (r *remote) platformCleanup() {
+	// Nothing to do
 }
 
-func (r *remote) UpdateOptions(opts ...RemoteOption) error {
-	return nil
-}
+func getGRPCConnection(addr string) (*grpc.ClientConn, error) {
+	// reset the logger for grpc to log to dev/null so that it does not mess with our stdio
+	grpclog.SetLogger(log.New(ioutil.Discard, "", log.LstdFlags))
+	dialOpts := []grpc.DialOption{
+		grpc.WithInsecure(),
+		grpc.WithBackoffMaxDelay(2 * time.Second),
+		grpc.WithTimeout(100 * time.Second),
+	}
+	dialOpts = append(dialOpts,
+		grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+			return winio.DialPipe(addr, &timeout)
+		},
+		))
 
-// New creates a fresh instance of libcontainerd remote. On Windows,
-// this is not used as there is no remote containerd process.
-func New(_ string, _ ...RemoteOption) (Remote, error) {
-	return &remote{}, nil
-}
+	conn, err := grpc.Dial(addr, dialOpts...)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to dial %q", addr)
+	}
 
-// WithLiveRestore is a noop on windows.
-func WithLiveRestore(v bool) RemoteOption {
-	return nil
+	return conn, nil
 }

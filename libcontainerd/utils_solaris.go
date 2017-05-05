@@ -21,7 +21,8 @@ func systemPid(ctr *containerd.Container) uint32 {
 	return pid
 }
 
-// setPDeathSig sets the parent death signal to SIGKILL
-func setSysProcAttr(sid bool) *syscall.SysProcAttr {
+// containerdSysProcAttr returns the SysProcAttr to use when exec'ing
+// containerd
+func containerdSysProcAttr() *syscall.SysProcAttr {
 	return nil
 }

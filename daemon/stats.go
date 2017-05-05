@@ -20,6 +20,8 @@ import (
 // ContainerStats writes information about the container to the stream
 // given in the config object.
 func (daemon *Daemon) ContainerStats(ctx context.Context, prefixOrName string, config *backend.ContainerStatsConfig) error {
+	return fmt.Errorf("%+v does not support stats", runtime.GOOS)
+
 	if runtime.GOOS == "solaris" {
 		return fmt.Errorf("%+v does not support stats", runtime.GOOS)
 	}

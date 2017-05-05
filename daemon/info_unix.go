@@ -3,7 +3,6 @@
 package daemon
 
 import (
-	"context"
 	"os/exec"
 	"strings"
 
@@ -12,6 +11,10 @@ import (
 	"github.com/docker/docker/pkg/sysinfo"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	RuncBinaryName = "docker-runc"
 )
 
 // FillPlatformInfo fills the platform related info.
@@ -27,14 +30,6 @@ func (daemon *Daemon) FillPlatformInfo(v *types.Info, sysInfo *sysinfo.SysInfo) 
 	v.Runtimes = daemon.configStore.GetAllRuntimes()
 	v.DefaultRuntime = daemon.configStore.GetDefaultRuntimeName()
 	v.InitBinary = daemon.configStore.GetInitPath()
-
-	v.ContainerdCommit.Expected = dockerversion.ContainerdCommitID
-	if sv, err := daemon.containerd.GetServerVersion(context.Background()); err == nil {
-		v.ContainerdCommit.ID = sv.Revision
-	} else {
-		logrus.Warnf("failed to retrieve containerd version: %v", err)
-		v.ContainerdCommit.ID = "N/A"
-	}
 
 	v.RuncCommit.Expected = dockerversion.RuncCommitID
 	defaultRuntimeBinary := daemon.configStore.GetRuntime(daemon.configStore.GetDefaultRuntimeName()).Path

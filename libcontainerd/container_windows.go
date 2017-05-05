@@ -11,6 +11,7 @@ import (
 	"github.com/Microsoft/hcsshim"
 	"github.com/docker/docker/pkg/system"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/windows"
 )
@@ -326,5 +327,54 @@ func (ctr *container) terminate() error {
 		return err
 	}
 
+	return nil
+}
+
+//////////////
+
+type WindowsCreateRequest struct {
+	rs *windows.RuntimeSpec
+	cr *execution.CreateRequest
+}
+
+func newCreateRequest(runtime, id string, ociSpec specs.Spec, options ...CreateOption) (*execution.CreateRequest, error) {
+	rs := windows.RuntimeSpec{
+		OCISpec: ociSpec,
+		Configuration: hcs.Configuration{
+			IgnoreFlushesDuringBoot:  true,
+			AllowUnqualifiedDNSQuery: true,
+		},
+	}
+
+	cr := &execution.CreateRequest{
+		ID: id,
+		Spec: &protobuf.Any{
+			TypeUrl: specs.Version,
+		},
+		Runtime:  runtime,
+		Terminal: ociSpec.Process.Terminal,
+	}
+
+	wcr := &WindowsCreateRequest{
+		rs: &rs,
+		cr: cr,
+	}
+
+	for opt := range options {
+		if err := opt.Apply(wcr); err != nil {
+			return nil, err
+		}
+	}
+
+	spec, err := json.Marshall(rs)
+	if err != nil {
+		return errors.Wrapf(err, "libcontainerd: failed to marshal OCI spec for container %s", id)
+	}
+	cr.Spec.Value = spec
+
+	return cr, nil
+}
+
+func (c *container) prepareBunbleDir(ociSpec *specs.Spec) error {
 	return nil
 }

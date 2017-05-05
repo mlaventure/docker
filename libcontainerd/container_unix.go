@@ -4,243 +4,122 @@ package libcontainerd
 
 import (
 	"encoding/json"
-	"io"
-	"io/ioutil"
+	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
-	"time"
+	"runtime"
+	"strings"
 
-	containerd "github.com/containerd/containerd/api/grpc/types"
-	"github.com/docker/docker/pkg/ioutils"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/sirupsen/logrus"
-	"github.com/tonistiigi/fifo"
-	"golang.org/x/net/context"
-	"golang.org/x/sys/unix"
+
+	containersapi "github.com/containerd/containerd/api/services/containers/v1"
+	tasksapi "github.com/containerd/containerd/api/services/tasks/v1"
+	"github.com/containerd/containerd/plugin"
+	"github.com/docker/docker/pkg/idtools"
+	protobuf "github.com/gogo/protobuf/types"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/pkg/errors"
 )
 
-type container struct {
-	containerCommon
-
-	// Platform specific fields are below here.
-	pauseMonitor
-	oom         bool
-	runtime     string
-	runtimeArgs []string
-}
-
-type runtime struct {
-	path string
-	args []string
-}
-
-// WithRuntime sets the runtime to be used for the created container
-func WithRuntime(path string, args []string) CreateOption {
-	return runtime{path, args}
-}
-
-func (rt runtime) Apply(p interface{}) error {
-	if pr, ok := p.(*container); ok {
-		pr.runtime = rt.path
-		pr.runtimeArgs = rt.args
-	}
-	return nil
-}
-
-func (ctr *container) clean() error {
-	if os.Getenv("LIBCONTAINERD_NOCLEAN") == "1" {
-		return nil
-	}
-	if _, err := os.Lstat(ctr.dir); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	if err := os.RemoveAll(ctr.dir); err != nil {
-		return err
-	}
-	return nil
-}
-
-// cleanProcess removes the fifos used by an additional process.
-// Caller needs to lock container ID before calling this method.
-func (ctr *container) cleanProcess(id string) {
-	if p, ok := ctr.processes[id]; ok {
-		for _, i := range []int{unix.Stdin, unix.Stdout, unix.Stderr} {
-			if err := os.Remove(p.fifo(i)); err != nil && !os.IsNotExist(err) {
-				logrus.Warnf("libcontainerd: failed to remove %v for process %v: %v", p.fifo(i), id, err)
-			}
-		}
-	}
-	delete(ctr.processes, id)
-}
-
-func (ctr *container) spec() (*specs.Spec, error) {
-	var spec specs.Spec
-	dt, err := ioutil.ReadFile(filepath.Join(ctr.dir, configFilename))
+func newContainerCreateRequest(id string, ociSpec *specs.Spec, options ...CreateOption) (*containersapi.CreateContainerRequest, error) {
+	spec, err := json.Marshal(ociSpec)
 	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(dt, &spec); err != nil {
-		return nil, err
-	}
-	return &spec, nil
-}
-
-func (ctr *container) start(spec *specs.Spec, checkpoint, checkpointDir string, attachStdio StdioCallback) (err error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ready := make(chan struct{})
-
-	fifoCtx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		if err != nil {
-			cancel()
-		}
-	}()
-
-	iopipe, err := ctr.openFifos(fifoCtx, spec.Process.Terminal)
-	if err != nil {
-		return err
+		return nil, errors.Wrapf(err, "libcontainerd: failed to marshal OCI spec for container %s", id)
 	}
 
-	var stdinOnce sync.Once
-
-	// we need to delay stdin closure after container start or else "stdin close"
-	// event will be rejected by containerd.
-	// stdin closure happens in attachStdio
-	stdin := iopipe.Stdin
-	iopipe.Stdin = ioutils.NewWriteCloserWrapper(stdin, func() error {
-		var err error
-		stdinOnce.Do(func() { // on error from attach we don't know if stdin was already closed
-			err = stdin.Close()
-			go func() {
-				select {
-				case <-ready:
-				case <-ctx.Done():
-				}
-				select {
-				case <-ready:
-					if err := ctr.sendCloseStdin(); err != nil {
-						logrus.Warnf("failed to close stdin: %+v", err)
-					}
-				default:
-				}
-			}()
-		})
-		return err
-	})
-
-	r := &containerd.CreateContainerRequest{
-		Id:            ctr.containerID,
-		BundlePath:    ctr.dir,
-		Stdin:         ctr.fifo(unix.Stdin),
-		Stdout:        ctr.fifo(unix.Stdout),
-		Stderr:        ctr.fifo(unix.Stderr),
-		Checkpoint:    checkpoint,
-		CheckpointDir: checkpointDir,
-		// check to see if we are running in ramdisk to disable pivot root
-		NoPivotRoot: os.Getenv("DOCKER_RAMDISK") != "",
-		Runtime:     ctr.runtime,
-		RuntimeArgs: ctr.runtimeArgs,
-	}
-	ctr.client.appendContainer(ctr)
-
-	if err := attachStdio(*iopipe); err != nil {
-		ctr.closeFifos(iopipe)
-		return err
-	}
-
-	resp, err := ctr.client.remote.apiClient.CreateContainer(context.Background(), r)
-	if err != nil {
-		ctr.closeFifos(iopipe)
-		return err
-	}
-	ctr.systemPid = systemPid(resp.Container)
-	close(ready)
-
-	return ctr.client.backend.StateChanged(ctr.containerID, StateInfo{
-		CommonStateInfo: CommonStateInfo{
-			State: StateStart,
-			Pid:   ctr.systemPid,
-		}})
-
-}
-
-func (ctr *container) newProcess(friendlyName string) *process {
-	return &process{
-		dir: ctr.dir,
-		processCommon: processCommon{
-			containerID:  ctr.containerID,
-			friendlyName: friendlyName,
-			client:       ctr.client,
+	cr := &containersapi.CreateContainerRequest{
+		Container: containersapi.Container{
+			ID: id,
+			Spec: &protobuf.Any{
+				TypeUrl: specs.Version,
+				Value:   spec,
+			},
+			Runtime: &containersapi.Container_Runtime{
+				Name: fmt.Sprintf("%s.%s", plugin.RuntimePlugin, runtime.GOOS),
+			},
 		},
 	}
+
+	for _, opt := range options {
+		if err := opt.Apply(cr); err != nil {
+			return nil, err
+		}
+	}
+
+	return cr, nil
 }
 
-func (ctr *container) handleEvent(e *containerd.Event) error {
-	ctr.client.lock(ctr.containerID)
-	defer ctr.client.unlock(ctr.containerID)
-	switch e.Type {
-	case StateExit, StatePause, StateResume, StateOOM:
-		st := StateInfo{
-			CommonStateInfo: CommonStateInfo{
-				State:    e.Type,
-				ExitCode: e.Status,
-			},
-			OOMKilled: e.Type == StateExit && ctr.oom,
-		}
-		if e.Type == StateOOM {
-			ctr.oom = true
-		}
-		if e.Type == StateExit && e.Pid != InitFriendlyName {
-			st.ProcessID = e.Pid
-			st.State = StateExitProcess
-		}
-
-		// Remove process from list if we have exited
-		switch st.State {
-		case StateExit:
-			ctr.clean()
-			ctr.client.deleteContainer(e.Id)
-		case StateExitProcess:
-			ctr.cleanProcess(st.ProcessID)
-		}
-		ctr.client.q.append(e.Id, func() {
-			if err := ctr.client.backend.StateChanged(e.Id, st); err != nil {
-				logrus.Errorf("libcontainerd: backend.StateChanged(): %v", err)
-			}
-			if e.Type == StatePause || e.Type == StateResume {
-				ctr.pauseMonitor.handle(e.Type)
-			}
-			if e.Type == StateExit {
-				if en := ctr.client.getExitNotifier(e.Id); en != nil {
-					en.close()
-				}
-			}
-		})
-
-	default:
-		logrus.Debugf("libcontainerd: event unhandled: %+v", e)
+func newExecRequest(id string, ociSpec *specs.Process) (*tasksapi.ExecProcessRequest, error) {
+	spec, err := json.Marshal(ociSpec)
+	if err != nil {
+		return nil, errors.Wrapf(err, "libcontainerd: failed to marshal OCI spec for container %s", id)
 	}
+
+	return &tasksapi.ExecProcessRequest{
+		ContainerID: id,
+		Spec: &protobuf.Any{
+			TypeUrl: specs.Version,
+			Value:   spec,
+		},
+		Terminal: ociSpec.Terminal,
+	}, nil
+}
+
+func hostIDFromMap(id uint32, mp []specs.LinuxIDMapping) int {
+	for _, m := range mp {
+		if id >= m.ContainerID && id <= m.ContainerID+m.Size-1 {
+			return int(m.HostID + id - m.ContainerID)
+		}
+	}
+	return 0
+}
+
+func getRootIDs(s specs.Spec) (int, int) {
+	for _, ns := range s.Linux.Namespaces {
+		if ns.Type == specs.UserNamespace {
+			return hostIDFromMap(0, s.Linux.UIDMappings), hostIDFromMap(0, s.Linux.GIDMappings)
+		}
+	}
+	return 0, 0
+}
+
+func (c *container) prepareBundleDir(ociSpec *specs.Spec) error {
+	var (
+		uid int
+		gid int
+	)
+
+	for _, ns := range ociSpec.Linux.Namespaces {
+		if ns.Type == specs.UserNamespace {
+			uid = hostIDFromMap(0, ociSpec.Linux.UIDMappings)
+			gid = hostIDFromMap(0, ociSpec.Linux.GIDMappings)
+			break
+		}
+	}
+	if uid == 0 && gid == 0 {
+		return idtools.MkdirAllAndChownNew(c.bundleDir, 0755, idtools.IDPair{0, 0})
+	}
+
+	p := string(filepath.Separator)
+	components := strings.Split(c.bundleDir, string(filepath.Separator))
+	for _, d := range components[1 : len(components)-1] {
+		p = filepath.Join(p, d)
+		fi, err := os.Stat(p)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if os.IsNotExist(err) || fi.Mode()&1 == 0 {
+			p = fmt.Sprintf("%s.%d.%d", p, uid, gid)
+			if err := idtools.MkdirAs(p, 0700, uid, gid); err != nil && !os.IsExist(err) {
+				return err
+			}
+		}
+	}
+	// Create the last directory (i.e. the container id)
+	if err := idtools.MkdirAs(components[len(components)-1:][0], 0700, uid, gid); err != nil && !os.IsExist(err) {
+		return err
+	}
+
+	c.bundleDir = p
 	return nil
-}
-
-// discardFifos attempts to fully read the container fifos to unblock processes
-// that may be blocked on the writer side.
-func (ctr *container) discardFifos() {
-	ctx, _ := context.WithTimeout(context.Background(), 3*time.Second)
-	for _, i := range []int{unix.Stdout, unix.Stderr} {
-		f, err := fifo.OpenFifo(ctx, ctr.fifo(i), unix.O_RDONLY|unix.O_NONBLOCK, 0)
-		if err != nil {
-			logrus.Warnf("error opening fifo %v for discarding: %+v", f, err)
-			continue
-		}
-		go func() {
-			io.Copy(ioutil.Discard, f)
-		}()
-	}
 }

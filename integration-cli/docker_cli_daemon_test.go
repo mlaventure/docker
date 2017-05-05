@@ -1431,7 +1431,7 @@ func (s *DockerDaemonSuite) TestCleanupMountsAfterDaemonAndContainerKill(c *chec
 	c.Assert(strings.Contains(string(mountOut), id), check.Equals, true, comment)
 
 	// kill the container
-	icmd.RunCommand(ctrBinary, "--address", "unix:///var/run/docker/libcontainerd/docker-containerd.sock", "containers", "kill", id).Assert(c, icmd.Success)
+	icmd.RunCommand(ctrBinary, "--address", "unix:///var/run/docker/containerd/docker-containerd.sock", "kill", id).Assert(c, icmd.Success)
 
 	// restart daemon.
 	d.Restart(c)
@@ -1991,7 +1991,7 @@ func (s *DockerDaemonSuite) TestDaemonRestartWithKilledRunningContainer(t *check
 	}
 
 	// kill the container
-	icmd.RunCommand(ctrBinary, "--address", "unix:///var/run/docker/libcontainerd/docker-containerd.sock", "containers", "kill", cid).Assert(t, icmd.Success)
+	icmd.RunCommand(ctrBinary, "--address", "unix:///var/run/docker/containerd/docker-containerd.sock", "kill", cid).Assert(t, icmd.Success)
 
 	// Give time to containerd to process the command if we don't
 	// the exit event might be received after we do the inspect
@@ -2086,8 +2086,8 @@ func (s *DockerDaemonSuite) TestDaemonRestartWithUnpausedRunningContainer(t *che
 	// resume the container
 	result := icmd.RunCommand(
 		ctrBinary,
-		"--address", "unix:///var/run/docker/libcontainerd/docker-containerd.sock",
-		"containers", "resume", cid)
+		"--address", "unix:///var/run/docker/containerd/docker-containerd.sock",
+		"resume", cid)
 	t.Assert(result, icmd.Matches, icmd.Success)
 
 	// Give time to containerd to process the command if we don't

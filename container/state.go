@@ -8,6 +8,7 @@ import (
 
 	"golang.org/x/net/context"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/go-units"
 )
@@ -34,6 +35,8 @@ type State struct {
 	FinishedAt        time.Time
 	Health            *Health
 
+	cid string
+
 	waitStop   chan struct{}
 	waitRemove chan struct{}
 }
@@ -59,8 +62,9 @@ func (s StateStatus) Err() error {
 }
 
 // NewState creates a default state object with a fresh channel for state changes.
-func NewState() *State {
+func NewState(id string) *State {
 	return &State{
+		cid:        id,
 		waitStop:   make(chan struct{}),
 		waitRemove: make(chan struct{}),
 	}
@@ -276,6 +280,7 @@ func (s *State) SetExitCode(ec int) {
 // SetRunning sets the state of the container to "running".
 func (s *State) SetRunning(pid int, initial bool) {
 	s.ErrorMsg = ""
+	s.Paused = false
 	s.Running = true
 	s.Restarting = false
 	if initial {
@@ -294,9 +299,14 @@ func (s *State) SetStopped(exitStatus *ExitStatus) {
 	s.Paused = false
 	s.Restarting = false
 	s.Pid = 0
-	s.FinishedAt = time.Now().UTC()
-	s.setFromExitStatus(exitStatus)
-	close(s.waitStop) // Fire waiters for stop
+	if exitStatus.ExitedAt.IsZero() {
+		s.FinishedAt = time.Now().UTC()
+	} else {
+		s.FinishedAt = exitStatus.ExitedAt
+	}
+	s.ExitCodeValue = exitStatus.ExitCode
+	s.OOMKilled = exitStatus.OOMKilled
+	close(s.waitStop) // fire waiters for stop
 	s.waitStop = make(chan struct{})
 }
 
@@ -310,8 +320,9 @@ func (s *State) SetRestarting(exitStatus *ExitStatus) {
 	s.Paused = false
 	s.Pid = 0
 	s.FinishedAt = time.Now().UTC()
-	s.setFromExitStatus(exitStatus)
-	close(s.waitStop) // Fire waiters for stop
+	s.ExitCodeValue = exitStatus.ExitCode
+	s.OOMKilled = exitStatus.OOMKilled
+	close(s.waitStop) // fire waiters for stop
 	s.waitStop = make(chan struct{})
 }
 
@@ -368,6 +379,7 @@ func (s *State) SetDead() {
 // closes the internal waitRemove channel to unblock callers waiting for a
 // container to be removed.
 func (s *State) SetRemoved() {
+	logrus.Debugf("Closing removed on %s", s.cid)
 	s.Lock()
 	close(s.waitRemove) // Unblock those waiting on remove.
 	s.Unlock()

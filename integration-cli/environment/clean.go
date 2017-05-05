@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"regexp"
 	"strings"
 
@@ -54,6 +55,8 @@ func getPausedContainers(t testingT, dockerBinary string) []string {
 var alreadyExists = regexp.MustCompile(`Error response from daemon: removal of container (\w+) is already in progress`)
 
 func deleteAllContainers(t testingT, dockerBinary string) {
+	b, err := exec.Command("ps", "fxj").CombinedOutput()
+	fmt.Printf("BEFORE deleteAllContainers(): ps fxj:\n%s\n Error: %v\n", string(b), err)
 	containers := getAllContainers(t, dockerBinary)
 	if len(containers) > 0 {
 		result := icmd.RunCommand(dockerBinary, append([]string{"rm", "-fv"}, containers...)...)
@@ -61,12 +64,14 @@ func deleteAllContainers(t testingT, dockerBinary string) {
 			// If the error is "No such container: ..." this means the container doesn't exists anymore,
 			// or if it is "... removal of container ... is already in progress" it will be removed eventually.
 			// We can safely ignore those.
-			if strings.Contains(result.Stderr(), "No such container") || alreadyExists.MatchString(result.Stderr()) {
+			if strings.Contains(result.Stderr(), "No such container") || alreadyExists.MatchString(result.Stderr()) || strings.Contains(result.Stderr(), "is already in progress") {
 				return
 			}
 			t.Fatalf("error removing containers %v : %v (%s)", containers, result.Error, result.Combined())
 		}
 	}
+	b, err = exec.Command("ps", "fxj").CombinedOutput()
+	fmt.Printf("AFTER deleteAllContainers(): ps fxj:\n%s\n Error: %v\n", string(b), err)
 }
 
 func getAllContainers(t testingT, dockerBinary string) []string {
