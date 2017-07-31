@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,15 +16,14 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	containersapi "github.com/containerd/containerd/api/services/containers/v1"
 	eventsapi "github.com/containerd/containerd/api/services/events/v1"
 	"github.com/containerd/containerd/api/services/tasks/v1"
-	"github.com/containerd/containerd/events"
 	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/typeurl"
 	"github.com/docker/docker/pkg/system"
-	"github.com/gogo/protobuf/proto"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
@@ -361,9 +361,11 @@ func (r *remote) monitorConnection() {
 func (r *remote) processEventStream(c *client) {
 	var (
 		err         error
-		eventStream eventsapi.Events_StreamClient
+		eventStream eventsapi.Events_SubscribeClient
 		ev          *eventsapi.Envelope
-		re          eventsapi.RuntimeEvent
+		et          EventType
+		ei          EventInfo
+		ctr         *container
 	)
 	defer func() {
 		if err != nil {
@@ -378,7 +380,9 @@ func (r *remote) processEventStream(c *client) {
 	}()
 
 	ctx := namespaces.WithNamespace(context.Background(), c.namespace)
-	eventStream, err = r.eventsSvc.Stream(ctx, &eventsapi.StreamEventsRequest{}, grpc.FailFast(false))
+	eventStream, err = r.eventsSvc.Subscribe(ctx, &eventsapi.SubscribeRequest{
+		Filters: []string{"namespace==" + c.namespace + ",topic~=/tasks/.+"},
+	}, grpc.FailFast(false))
 	if err != nil {
 		return
 	}
@@ -390,57 +394,80 @@ func (r *remote) processEventStream(c *client) {
 			return
 		}
 
-		// We only care about runtime events
-		switch {
-		case ev.Event == nil:
+		if ev.Event == nil {
 			logrus.WithField("event", ev).Warnf("libcontainerd: invalid event")
-			continue
-		case events.Is(ev.Event, &re):
-			if err := proto.Unmarshal(ev.Event.Value, &re); err != nil {
-				logrus.WithField("event", ev).Errorf("libcontainerd: failed to unmarshal event")
-				continue
-			}
-			logrus.WithFields(logrus.Fields{
-				"topic":        ev.Topic,
-				"RuntimeEvent": re,
-			}).Debugf("libcontainerd: received event")
-		default:
-			logrus.WithField("topic", ev.Topic).Debugf("libcontainerd: ignoring event")
 			continue
 		}
 
-		var ctr *container
-		_, ctr, err = c.getContainer(context.Background(), re.ID)
+		v, err := typeurl.UnmarshalAny(ev.Event)
+		if err != nil {
+			logrus.WithField("event", ev).Errorf("libcontainerd: failed to unmarshal event")
+			continue
+		}
+
+		switch t := v.(type) {
+		case *eventsapi.TaskCreate:
+			et = EventCreate
+			ei = EventInfo{
+				ContainerID: t.ContainerID,
+				ProcessID:   t.ContainerID,
+				Pid:         t.Pid,
+			}
+		case *eventsapi.TaskStart:
+			et = EventStart
+			ei = EventInfo{
+				ContainerID: t.ContainerID,
+				ProcessID:   t.ContainerID,
+				Pid:         t.Pid,
+			}
+		case *eventsapi.TaskExit:
+			et = EventExit
+			ei = EventInfo{
+				ContainerID: t.ContainerID,
+				ProcessID:   t.ID,
+				Pid:         t.Pid,
+				ExitCode:    t.ExitStatus,
+				ExitedAt:    t.ExitedAt,
+			}
+		case *eventsapi.TaskOOM:
+			et = EventOOM
+			ei = EventInfo{
+				ContainerID: t.ContainerID,
+			}
+		case *eventsapi.TaskExecAdded:
+			et = EventExecAdded
+			ei = EventInfo{
+				ContainerID: t.ContainerID,
+				ProcessID:   t.ExecID,
+				Pid:         t.Pid,
+			}
+		case *eventsapi.TaskPaused:
+			et = EventPaused
+			ei = EventInfo{
+				ContainerID: t.ContainerID,
+			}
+		case *eventsapi.TaskResumed:
+			et = EventPaused
+			ei = EventInfo{
+				ContainerID: t.ContainerID,
+			}
+		default:
+			logrus.WithFields(logrus.Fields{
+				"topic": ev.Topic,
+				"type":  reflect.TypeOf(t)},
+			).Info("libcontainerd: ignoring event")
+			continue
+		}
+
+		_, ctr, err = c.getContainer(context.Background(), ei.ContainerID)
 		if ctr == nil {
 			logrus.WithFields(logrus.Fields{
 				"client":    c.namespace,
-				"container": re.ID,
+				"container": ei.ContainerID,
 			}).Warnf("libcontainerd: unknown container for client")
 			continue
 		}
 
-		ei := EventInfo{
-			Pid:      re.Pid,
-			ExitCode: re.ExitStatus,
-			ExitedAt: re.ExitedAt,
-		}
-		ctr.ProcessEvent(toEventType(re.Type), ei)
+		ctr.ProcessEvent(et, ei)
 	}
-}
-
-var containerEventToEventType = map[eventsapi.RuntimeEvent_EventType]EventType{
-	eventsapi.RuntimeEvent_EXIT:       EventExit,
-	eventsapi.RuntimeEvent_OOM:        EventOOM,
-	eventsapi.RuntimeEvent_CREATE:     EventCreate,
-	eventsapi.RuntimeEvent_START:      EventStart,
-	eventsapi.RuntimeEvent_EXEC_ADDED: EventExecAdded,
-	eventsapi.RuntimeEvent_PAUSED:     EventPaused,
-}
-
-func toEventType(t eventsapi.RuntimeEvent_EventType) EventType {
-	et, ok := containerEventToEventType[t]
-	if ok {
-		return et
-	}
-	return EventUnknown
 }

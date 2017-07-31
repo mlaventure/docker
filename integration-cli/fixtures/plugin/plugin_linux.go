@@ -42,9 +42,11 @@ func Create(ctx context.Context, c CreateClient, name string, opts ...CreateOpt)
 // The manager panics on init when `Executor` is not set.
 type dummyExecutor struct{}
 
-func (dummyExecutor) Client(libcontainerd.Backend) (libcontainerd.Client, error) { return nil, nil }
-func (dummyExecutor) Cleanup()                                                   {}
-func (dummyExecutor) UpdateOptions(...libcontainerd.RemoteOption) error          { return nil }
+func (dummyExecutor) NewClient(string, libcontainerd.Backend) (libcontainerd.Client, error) {
+	return nil, nil
+}
+func (dummyExecutor) Cleanup()                                          {}
+func (dummyExecutor) UpdateOptions(...libcontainerd.RemoteOption) error { return nil }
 
 // CreateInRegistry makes a plugin (locally) and pushes it to a registry.
 // This does not use a dockerd instance to create or push the plugin.

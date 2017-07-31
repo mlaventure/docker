@@ -124,19 +124,14 @@ func (daemon *Daemon) ProcessEvent(id string, e libcontainerd.EventType, ei libc
 		c.Lock()
 		defer c.Unlock()
 
-		isPaused := c.Paused
-		c.SetRunning(int(ei.Pid), !isPaused)
+		// TODO(mlaventure): can't this be done in daemon/start.go directly?
+		c.SetRunning(int(ei.Pid), true)
 		c.HasBeenManuallyStopped = false
 		c.HasBeenStartedBefore = true
 		daemon.setStateCounter(c)
 
-		if isPaused {
-			daemon.updateHealthMonitor(c)
-			daemon.LogContainerEvent(c, "unpause")
-		} else {
-			daemon.initHealthMonitor(c)
-			daemon.LogContainerEvent(c, "start")
-		}
+		daemon.initHealthMonitor(c)
+		daemon.LogContainerEvent(c, "start")
 
 		if err := c.CheckpointTo(daemon.containersReplica); err != nil {
 			return err
@@ -155,6 +150,22 @@ func (daemon *Daemon) ProcessEvent(id string, e libcontainerd.EventType, ei libc
 			}
 			daemon.LogContainerEvent(c, "pause")
 		}
+	case libcontainerd.EventResumed:
+		c.Lock()
+		defer c.Unlock()
+
+		c.SetRunning(int(ei.Pid), false)
+		c.HasBeenManuallyStopped = false
+		c.HasBeenStartedBefore = true
+		daemon.setStateCounter(c)
+
+		daemon.updateHealthMonitor(c)
+		daemon.LogContainerEvent(c, "unpause")
+
+		if err := c.CheckpointTo(daemon.containersReplica); err != nil {
+			return err
+		}
+
 	}
 	return nil
 }

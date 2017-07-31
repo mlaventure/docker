@@ -12,7 +12,6 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/Sirupsen/logrus"
 	containersapi "github.com/containerd/containerd/api/services/containers/v1"
 	tasksapi "github.com/containerd/containerd/api/services/tasks/v1"
 	"github.com/containerd/containerd/api/types/task"
@@ -20,6 +19,7 @@ import (
 	"github.com/docker/docker/pkg/ioutils"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -70,7 +70,7 @@ func (c *container) Restore(ctx context.Context, withStdin, withTerminal bool, a
 		return false, -1, errors.Wrapf(fmt.Errorf(errDesc), "failed to retrieve container %s info", c.id)
 	}
 
-	// TODO: add support to restore all processes not just the init one
+	// TODO(mlaventure): add support to restore all processes not just the init one
 	// (e.g. make a directory per process for the IO in the unix case)
 
 	p, err := newProcess(ctx, InitProcessName, c.bundleDir, withStdin, withTerminal)
@@ -228,15 +228,12 @@ func (c *container) SignalProcess(ctx context.Context, processID string, signal 
 	kr := &tasksapi.KillRequest{
 		ContainerID: c.id,
 		Signal:      uint32(signal),
+		All:         p.Pid() == c.initProcess.Pid(),
 	}
-	if p.Pid() == c.initProcess.Pid() {
-		kr.PidOrAll = &tasksapi.KillRequest_All{
-			All: true,
-		}
+	if processID == InitProcessName {
+		kr.ExecID = c.id
 	} else {
-		kr.PidOrAll = &tasksapi.KillRequest_Pid{
-			Pid: p.Pid(),
-		}
+		kr.ExecID = processID
 	}
 
 	_, err = c.client.remote.tasksSvc.Kill(ctx, kr)
@@ -247,14 +244,18 @@ func (c *container) SignalProcess(ctx context.Context, processID string, signal 
 }
 
 func (c *container) ResizeTerminal(ctx context.Context, id string, width, height int) error {
-	p, err := c.getProcess(id)
+	_, err := c.getProcess(id)
 	if err != nil {
 		return err
 	}
 
+	if id == InitProcessName {
+		id = c.id
+	}
+
 	_, err = c.client.remote.tasksSvc.ResizePty(ctx, &tasksapi.ResizePtyRequest{
 		ContainerID: c.id,
-		Pid:         p.Pid(),
+		ExecID:      id,
 		Width:       uint32(width),
 		Height:      uint32(height),
 	})
@@ -266,14 +267,18 @@ func (c *container) ResizeTerminal(ctx context.Context, id string, width, height
 }
 
 func (c *container) CloseStdin(ctx context.Context, id string) error {
-	p, err := c.getProcess(id)
+	_, err := c.getProcess(id)
 	if err != nil {
 		return err
 	}
 
+	if id == InitProcessName {
+		id = c.id
+	}
+
 	_, err = c.client.remote.tasksSvc.CloseIO(ctx, &tasksapi.CloseIORequest{
 		ContainerID: c.id,
-		Pid:         p.Pid(),
+		ExecID:      id,
 		Stdin:       true,
 	})
 
@@ -363,17 +368,17 @@ func (c *container) ProcessEvent(et EventType, ei EventInfo) {
 			logrus.WithError(err).WithField("container", c.id).Errorf("libcontainerd: failed to process event %v: %#v", et, ei)
 		}
 
-		if et == EventExit && ei.Pid != c.initProcess.Pid() {
+		if et == EventExit && ei.ProcessID != c.id {
 			_, err := c.client.remote.tasksSvc.DeleteProcess(context.Background(),
-				&tasksapi.DeleteProcessRequest{ContainerID: c.id, Pid: ei.Pid})
+				&tasksapi.DeleteProcessRequest{ContainerID: c.id, ExecID: ei.ProcessID})
 			if err != nil {
 				logrus.WithFields(logrus.Fields{
-					"error":     grpc.ErrorDesc(err),
-					"container": c.id,
-					"pid":       ei.Pid,
+					"error":      grpc.ErrorDesc(err),
+					"container":  c.id,
+					"process-id": ei.ProcessID,
 				}).Warn("failed to delete process")
 			}
-			c.removeProcessByPid(ei.Pid)
+			c.removeProcess(ei.ProcessID)
 		}
 	})
 }
@@ -420,7 +425,7 @@ func (c *container) attachProcessStdio(p *process, attachStdio StdioCallback) er
 		var (
 			err       error
 			stdinOnce sync.Once
-			pid       = p.Pid()
+			execID    = p.ID()
 		)
 		pipe := iop.Stdin
 		iop.Stdin = ioutils.NewWriteCloserWrapper(pipe, func() error {
@@ -429,7 +434,7 @@ func (c *container) attachProcessStdio(p *process, attachStdio StdioCallback) er
 				ctx := namespaces.WithNamespace(context.Background(), c.client.namespace)
 				_, err = c.client.remote.tasksSvc.CloseIO(ctx, &tasksapi.CloseIORequest{
 					ContainerID: c.id,
-					Pid:         pid,
+					ExecID:      execID,
 					Stdin:       true,
 				})
 				if strings.Contains(grpc.ErrorDesc(err), "container does not exist") {

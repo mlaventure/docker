@@ -6,9 +6,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/mount"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // EnsureRemoveAll wraps `os.RemoveAll` to check for specific errors that can

@@ -10,8 +10,6 @@ import (
 	"runtime"
 	"strings"
 
-	specs "github.com/opencontainers/runtime-spec/specs-go"
-
 	containersapi "github.com/containerd/containerd/api/services/containers/v1"
 	tasksapi "github.com/containerd/containerd/api/services/tasks/v1"
 	"github.com/containerd/containerd/plugin"

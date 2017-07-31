@@ -18,7 +18,8 @@ const (
 	EventCreate    EventType = "create"
 	EventStart     EventType = "start"
 	EventExecAdded EventType = "exec-added"
-	EventPaused    EventType = "pause"
+	EventPaused    EventType = "paused"
+	EventResumed   EventType = "resumed"
 )
 
 // Remote on Linux defines the accesspoint to the containerd grpc API.
@@ -42,9 +43,11 @@ type RemoteOption interface {
 
 // EventInfo contains the event info
 type EventInfo struct {
-	Pid      uint32
-	ExitCode uint32
-	ExitedAt time.Time
+	ContainerID string
+	ProcessID   string
+	Pid         uint32
+	ExitCode    uint32
+	ExitedAt    time.Time
 }
 
 // Backend defines callbacks that the client of the library needs to implement.
