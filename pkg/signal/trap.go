@@ -3,6 +3,7 @@ package signal
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	gosignal "os/signal"
 	"path/filepath"
 	"runtime"
@@ -58,6 +59,9 @@ func Trap(cleanup func(), logger interface {
 						logger.Info("Forcing docker daemon shutdown without cleanup; 3 interrupts received")
 					}
 				case syscall.SIGQUIT:
+					logger.Info("Kill USR1 docker-containerd")
+					exec.Command("pkill", "-USR1", "docker-c").Run()
+					<-time.After(500 * time.Millisecond)
 					DumpStacks("")
 					logger.Info("Forcing docker daemon shutdown without cleanup on SIGQUIT")
 				}

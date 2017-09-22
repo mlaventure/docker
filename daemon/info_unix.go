@@ -3,7 +3,6 @@
 package daemon
 
 import (
-	"context"
 	"os/exec"
 	"strings"
 
@@ -12,6 +11,11 @@ import (
 	"github.com/docker/docker/pkg/sysinfo"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	// RuncBinaryName is the name of the runc we are expecting
+	RuncBinaryName = "docker-runc"
 )
 
 // FillPlatformInfo fills the platform related info.
@@ -28,16 +32,8 @@ func (daemon *Daemon) FillPlatformInfo(v *types.Info, sysInfo *sysinfo.SysInfo) 
 	v.DefaultRuntime = daemon.configStore.GetDefaultRuntimeName()
 	v.InitBinary = daemon.configStore.GetInitPath()
 
-	v.ContainerdCommit.Expected = dockerversion.ContainerdCommitID
-	if sv, err := daemon.containerd.GetServerVersion(context.Background()); err == nil {
-		v.ContainerdCommit.ID = sv.Revision
-	} else {
-		logrus.Warnf("failed to retrieve containerd version: %v", err)
-		v.ContainerdCommit.ID = "N/A"
-	}
-
 	v.RuncCommit.Expected = dockerversion.RuncCommitID
-	defaultRuntimeBinary := daemon.configStore.GetRuntime(daemon.configStore.GetDefaultRuntimeName()).Path
+	defaultRuntimeBinary := daemon.configStore.GetRuntime(v.DefaultRuntime).Path
 	if rv, err := exec.Command(defaultRuntimeBinary, "--version").Output(); err == nil {
 		parts := strings.Split(strings.TrimSpace(string(rv)), "\n")
 		if len(parts) == 3 {
@@ -54,6 +50,21 @@ func (daemon *Daemon) FillPlatformInfo(v *types.Info, sysInfo *sysinfo.SysInfo) 
 	} else {
 		logrus.Warnf("failed to retrieve %s version: %v", defaultRuntimeBinary, err)
 		v.RuncCommit.ID = "N/A"
+	}
+
+	v.ContainerdCommit.Expected = dockerversion.ContainerdCommitID
+	if rv, err := exec.Command("docker-containerd", "--version").Output(); err == nil {
+		parts := strings.Split(strings.TrimSpace(string(rv)), " ")
+		if len(parts) == 3 {
+			v.ContainerdCommit.ID = parts[2]
+		}
+		if v.ContainerdCommit.ID == "" {
+			logrus.Warnf("failed to retrieve docker-containerd version: unknown format", string(rv))
+			v.ContainerdCommit.ID = "N/A"
+		}
+	} else {
+		logrus.Warnf("failed to retrieve docker-containerd version: %v", err)
+		v.ContainerdCommit.ID = "N/A"
 	}
 
 	defaultInitBinary := daemon.configStore.GetInitPath()

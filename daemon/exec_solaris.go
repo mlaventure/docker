@@ -6,6 +6,6 @@ import (
 	"github.com/docker/docker/libcontainerd"
 )
 
-func execSetPlatformOpt(c *container.Container, ec *exec.Config, p *libcontainerd.Process) error {
+func (daemon *Daemon) execSetPlatformOpt(c *container.Container, ec *exec.Config, p *libcontainerd.Process) error {
 	return nil
 }
