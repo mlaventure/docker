@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 	"time"
@@ -124,6 +125,9 @@ func (daemon *Daemon) cleanupContainer(container *container.Container, forceRemo
 	}
 
 	if err := system.EnsureRemoveAll(container.Root); err != nil {
+		b, err1 := exec.Command("lsof", "+D", "/var/lib/docker/containers/"+container.ID).CombinedOutput()
+		logrus.WithError(err1).Debugf("lsof for %s:\n%s\n", container.ID, string(b))
+
 		return errors.Wrapf(err, "unable to remove filesystem for %s", container.ID)
 	}
 
@@ -140,6 +144,7 @@ func (daemon *Daemon) cleanupContainer(container *container.Container, forceRemo
 	}
 	container.SetRemoved()
 	stateCtr.del(container.ID)
+
 	daemon.LogContainerEvent(container, "destroy")
 	return nil
 }

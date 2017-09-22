@@ -3,15 +3,16 @@
 package daemon
 
 import (
+	"fmt"
+	"path/filepath"
+
+	"github.com/containerd/containerd/linux/runcopts"
 	"github.com/docker/docker/container"
-	"github.com/docker/docker/libcontainerd"
 	"github.com/pkg/errors"
 )
 
 // getLibcontainerdCreateOptions callers must hold a lock on the container
-func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Container) ([]libcontainerd.CreateOption, error) {
-	createOptions := []libcontainerd.CreateOption{}
-
+func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Container) (interface{}, error) {
 	// Ensure a runtime has been assigned to this container
 	if container.HostConfig.Runtime == "" {
 		container.HostConfig.Runtime = daemon.configStore.GetDefaultRuntimeName()
@@ -22,10 +23,15 @@ func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Contain
 	if rt == nil {
 		return nil, validationError{errors.Errorf("no such runtime '%s'", container.HostConfig.Runtime)}
 	}
-	if UsingSystemd(daemon.configStore) {
-		rt.Args = append(rt.Args, "--systemd-cgroup=true")
+	opts := &runcopts.RuncOptions{
+		Runtime: rt.Path,
+		RuntimeRoot: filepath.Join(daemon.configStore.ExecRoot,
+			fmt.Sprintf("runtime-%s", container.HostConfig.Runtime)),
 	}
-	createOptions = append(createOptions, libcontainerd.WithRuntime(rt.Path, rt.Args))
 
-	return createOptions, nil
+	if UsingSystemd(daemon.configStore) {
+		opts.SystemdCgroup = true
+	}
+
+	return opts, nil
 }

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -71,7 +72,7 @@ func (daemon *Daemon) CheckpointCreate(name string, config types.CheckpointCreat
 		return fmt.Errorf("cannot checkpoint container %s: %s", name, err)
 	}
 
-	err = daemon.containerd.CreateCheckpoint(container.ID, config.CheckpointID, checkpointDir, config.Exit)
+	err = daemon.containerd.CreateCheckpoint(context.Background(), container.ID, config.CheckpointID, checkpointDir, config.Exit)
 	if err != nil {
 		return fmt.Errorf("Cannot checkpoint container %s: %s", name, err)
 	}

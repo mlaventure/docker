@@ -64,6 +64,11 @@ func errExecPaused(id string) error {
 	return stateConflictError{cause}
 }
 
+func errNotPaused(id string) error {
+	cause := errors.Errorf("Container %s is already paused", id)
+	return stateConflictError{cause}
+}
+
 type validationError struct {
 	cause error
 }

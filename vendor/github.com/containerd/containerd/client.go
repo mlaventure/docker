@@ -23,6 +23,7 @@ import (
 	"github.com/containerd/containerd/content"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/images"
+	"github.com/containerd/containerd/platforms"
 	"github.com/containerd/containerd/plugin"
 	"github.com/containerd/containerd/reference"
 	"github.com/containerd/containerd/remotes"
@@ -226,7 +227,7 @@ func (c *Client) Pull(ctx context.Context, ref string, opts ...RemoteOpts) (Imag
 	} else {
 		handler = images.Handlers(append(pullCtx.BaseHandlers,
 			remotes.FetchHandler(store, fetcher),
-			images.ChildrenHandler(store))...,
+			images.ChildrenHandler(store, platforms.Default()))...,
 		)
 	}
 
@@ -307,7 +308,7 @@ func (c *Client) Push(ctx context.Context, ref string, desc ocispec.Descriptor, 
 	pushHandler := remotes.PushHandler(cs, pusher)
 
 	handlers := append(pushCtx.BaseHandlers,
-		images.ChildrenHandler(cs),
+		images.ChildrenHandler(cs, platforms.Default()),
 		filterHandler,
 		pushHandler,
 	)
@@ -339,8 +340,8 @@ func (c *Client) GetImage(ctx context.Context, ref string) (Image, error) {
 }
 
 // ListImages returns all existing images
-func (c *Client) ListImages(ctx context.Context) ([]Image, error) {
-	imgs, err := c.ImageService().List(ctx)
+func (c *Client) ListImages(ctx context.Context, filters ...string) ([]Image, error) {
+	imgs, err := c.ImageService().List(ctx, filters...)
 	if err != nil {
 		return nil, err
 	}
@@ -405,42 +406,52 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
+// NamespaceService returns the underlying NamespacesClient
 func (c *Client) NamespaceService() namespacesapi.NamespacesClient {
 	return namespacesapi.NewNamespacesClient(c.conn)
 }
 
+// ContainerService returns the underlying container Store
 func (c *Client) ContainerService() containers.Store {
 	return NewRemoteContainerStore(containersapi.NewContainersClient(c.conn))
 }
 
+// ContentStore returns the underlying content Store
 func (c *Client) ContentStore() content.Store {
 	return contentservice.NewStoreFromClient(contentapi.NewContentClient(c.conn))
 }
 
+// SnapshotService returns the underlying snapshotter for the provided snapshotter name
 func (c *Client) SnapshotService(snapshotterName string) snapshot.Snapshotter {
 	return snapshotservice.NewSnapshotterFromClient(snapshotapi.NewSnapshotsClient(c.conn), snapshotterName)
 }
 
+// TaskService returns the underlying TasksClient
 func (c *Client) TaskService() tasks.TasksClient {
 	return tasks.NewTasksClient(c.conn)
 }
 
+// ImageService returns the underlying image Store
 func (c *Client) ImageService() images.Store {
 	return imagesservice.NewStoreFromClient(imagesapi.NewImagesClient(c.conn))
 }
 
+// DiffService returns the underlying DiffService
 func (c *Client) DiffService() diff.DiffService {
 	return diffservice.NewDiffServiceFromClient(diffapi.NewDiffClient(c.conn))
 }
 
+// HealthService returns the underlying GRPC HealthClient
 func (c *Client) HealthService() grpc_health_v1.HealthClient {
 	return grpc_health_v1.NewHealthClient(c.conn)
 }
 
+// EventService returns the underlying EventsClient
 func (c *Client) EventService() eventsapi.EventsClient {
 	return eventsapi.NewEventsClient(c.conn)
 }
 
+// VersionService returns the underlying VersionClient
 func (c *Client) VersionService() versionservice.VersionClient {
 	return versionservice.NewVersionClient(c.conn)
 }

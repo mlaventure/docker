@@ -58,6 +58,7 @@ RUN apt-get update && apt-get install -y \
 	libsystemd-dev \
 	libtool \
 	libudev-dev \
+	lsof \
 	mercurial \
 	net-tools \
 	pkg-config \
