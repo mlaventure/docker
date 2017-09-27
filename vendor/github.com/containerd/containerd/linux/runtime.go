@@ -176,6 +176,7 @@ func (r *Runtime) Create(ctx context.Context, id string, opts runtime.CreateOpts
 			cgroup = v.(*runcopts.CreateOptions).ShimCgroup
 		}
 		shimopt = ShimRemote(r.config.Shim, r.address, cgroup, r.config.ShimDebug, func() {
+			log.G(ctx).WithField("id", id).Info("shim reaped")
 			t, err := r.tasks.Get(ctx, id)
 			if err != nil {
 				// Task was never started or was already sucessfully deleted

@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -50,6 +51,7 @@ func TestRenameLinkedContainer(t *testing.T) {
 		&network.NetworkingConfig{},
 		"a0",
 	)
+	fmt.Println("a0", aID)
 
 	bID = runContainer(ctx, t, client,
 		cntConfig,
@@ -59,16 +61,18 @@ func TestRenameLinkedContainer(t *testing.T) {
 		&network.NetworkingConfig{},
 		"b0",
 	)
+	fmt.Println("b0", bID)
 
 	err = client.ContainerRename(ctx, aID, "a1")
 	require.NoError(t, err)
 
-	runContainer(ctx, t, client,
+	cID := runContainer(ctx, t, client,
 		cntConfig,
 		&container.HostConfig{},
 		&network.NetworkingConfig{},
 		"a0",
 	)
+	fmt.Println("a1", cID)
 
 	err = client.ContainerRemove(ctx, bID, types.ContainerRemoveOptions{Force: true})
 	require.NoError(t, err)

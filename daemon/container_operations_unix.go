@@ -338,6 +338,18 @@ func killProcessDirectly(cntr *container.Container) error {
 }
 
 func detachMounted(path string) error {
+	err := unix.Unmount(path, unix.MNT_EXPIRE)
+	if err == unix.EAGAIN {
+		logrus.Debugf("%s: is expired", path)
+		err = unix.Unmount(path, unix.MNT_EXPIRE)
+		if err != nil {
+			return err
+		}
+		err = unix.Unmount(path, 0)
+		logrus.WithError(err).Debug("standard unmount after expire")
+		return nil
+	}
+	logrus.WithError(err).Debugf("%s: is busy", path)
 	return unix.Unmount(path, unix.MNT_DETACH)
 }
 

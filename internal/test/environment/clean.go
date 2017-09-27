@@ -105,14 +105,16 @@ func deleteAllImages(t testingT, apiclient client.ImageAPIClient, protectedImage
 	for _, image := range images {
 		tags := tagsFromImageSummary(image)
 		if len(tags) == 0 {
-			t.Logf("Removing image %s", image.ID)
+			t.Logf("1 - Removing image %s", image.ID)
 			removeImage(ctx, t, apiclient, image.ID)
+			t.Logf("3 - Removed image %s", image.ID)
 			continue
 		}
 		for _, tag := range tags {
 			if _, ok := protectedImages[tag]; !ok {
-				t.Logf("Removing image %s", tag)
+				t.Logf("2 - Removing image %s", tag)
 				removeImage(ctx, t, apiclient, tag)
+				t.Logf("4 - Removed image %s", image.ID)
 				continue
 			}
 		}

@@ -40,11 +40,12 @@ func (daemon *Daemon) ContainerRm(name string, config *types.ContainerRmConfig) 
 		return nil
 	}
 
+	err = daemon.cleanupContainer(container, config.ForceRemove, config.RemoveVolume)
+
 	if config.RemoveLink {
 		return daemon.rmLink(container, name)
 	}
 
-	err = daemon.cleanupContainer(container, config.ForceRemove, config.RemoveVolume)
 	containerActions.WithValues("delete").UpdateSince(start)
 
 	return err
@@ -125,8 +126,10 @@ func (daemon *Daemon) cleanupContainer(container *container.Container, forceRemo
 	}
 
 	if err := system.EnsureRemoveAll(container.Root); err != nil {
-		b, err1 := exec.Command("lsof", "+D", "/var/lib/docker/containers/"+container.ID).CombinedOutput()
-		logrus.WithError(err1).Debugf("lsof for %s:\n%s\n", container.ID, string(b))
+		b, err1 := exec.Command("cat", fmt.Sprintf("/proc/%v/mountinfo", os.Getpid())).CombinedOutput()
+		logrus.WithError(err1).Debugf("mountinfo:\n%s\n", string(b))
+		b, err1 = exec.Command("ps", "afx").CombinedOutput()
+		logrus.WithError(err1).Debugf("ps afx:\n%s\n", string(b))
 
 		return errors.Wrapf(err, "unable to remove filesystem for %s", container.ID)
 	}

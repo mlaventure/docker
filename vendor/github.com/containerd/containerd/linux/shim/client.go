@@ -99,12 +99,14 @@ func newCommand(binary, daemonAddress string, debug bool, config Config, socket 
 	if config.SystemdCgroup {
 		args = append(args, "--systemd-cgroup")
 	}
-	if debug {
-		args = append(args, "--debug")
-	}
+	// if debug {
+	args = append(args, "--debug")
+	// }
 
 	cmd := exec.Command(binary, args...)
 	cmd.Dir = config.Path
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	// make sure the shim can be re-parented to system init
 	// and is cloned in a new mount namespace because the overlay/filesystems
 	// will be mounted by the shim
