@@ -23,6 +23,8 @@ func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Contain
 	if rt == nil {
 		return nil, validationError{errors.Errorf("no such runtime '%s'", container.HostConfig.Runtime)}
 	}
+	// TODO(mlaventure): create a script shell to take in account the possible
+	// runtime-args
 	opts := &runcopts.RuncOptions{
 		Runtime: rt.Path,
 		RuntimeRoot: filepath.Join(daemon.configStore.ExecRoot,

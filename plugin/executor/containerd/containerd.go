@@ -4,11 +4,11 @@ import (
 	"context"
 	"io"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/linux/runcopts"
+	"github.com/docker/docker/api/errdefs"
 	"github.com/docker/docker/libcontainerd"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -62,21 +62,18 @@ func (e *Executor) Create(id string, spec specs.Spec, stdout, stderr io.WriteClo
 // Restore restores a container
 func (e *Executor) Restore(id string, stdout, stderr io.WriteCloser) error {
 	alive, _, err := e.client.Restore(context.Background(), id, attachStreamsFunc(stdout, stderr))
-	if err != nil && !strings.Contains(err.Error(), "no such container") &&
-		!strings.Contains(err.Error(), "not found") {
+	if err != nil && !errdefs.IsNotFound(err) {
 		return err
 	}
 	if !alive {
 		_, _, err = e.client.DeleteTask(context.Background(), id)
-		if err != nil && !strings.Contains(err.Error(), "no such container") &&
-			!strings.Contains(err.Error(), "not found") {
+		if err != nil && !errdefs.IsNotFound(err) {
 			logrus.WithError(err).Errorf("failed to delete container plugin %s task from containerd", id)
 			return err
 		}
 
 		err = e.client.Delete(context.Background(), id)
-		if err != nil && !strings.Contains(err.Error(), "no such container") &&
-			!strings.Contains(err.Error(), "not found") {
+		if err != nil && !errdefs.IsNotFound(err) {
 			logrus.WithError(err).Errorf("failed to delete container plugin %s from containerd", id)
 			return err
 		}

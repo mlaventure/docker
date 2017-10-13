@@ -53,18 +53,18 @@ type client struct {
 	containers map[string]*container
 }
 
-func (c *client) Restore(ctx context.Context, id string, attachStdio StdioCallback) (bool, int, error) {
+func (c *client) Restore(ctx context.Context, id string, attachStdio StdioCallback) (alive bool, pid int, err error) {
 	c.Lock()
 	defer c.Unlock()
 
-	var (
-		cio containerd.IO
-		err error
-	)
+	var cio containerd.IO
+	defer func() {
+		err = wrapError(err)
+	}()
 
 	ctr, err := c.remote.LoadContainer(ctx, id)
 	if err != nil {
-		return false, -1, err
+		return false, -1, errors.WithStack(err)
 	}
 
 	defer func() {
@@ -87,10 +87,6 @@ func (c *client) Restore(ctx context.Context, id string, attachStdio StdioCallba
 		return false, -1, err
 	}
 
-	var (
-		alive bool
-		pid   = -1
-	)
 	if t != nil {
 		s, err := t.Status(ctx)
 		if err != nil {
@@ -123,7 +119,7 @@ func (c *client) Create(ctx context.Context, id string, ociSpec *specs.Spec, run
 
 	bdir, err := prepareBundleDir(filepath.Join(c.stateDir, id), ociSpec)
 	if err != nil {
-		return errors.Wrap(err, "prepare bundle dir failed")
+		return wrapSystemError(errors.Wrap(err, "prepare bundle dir failed"))
 	}
 
 	c.logger.WithField("bundle", bdir).WithField("root", ociSpec.Root.Path).Debug("bundle dir created")
@@ -683,4 +679,17 @@ func (c *client) processEventStream(ctx context.Context) {
 
 		c.processEvent(ctr, et, ei)
 	}
+}
+
+func wrapError(err error) error {
+	if err != nil {
+		msg := err.Error()
+		for _, s := range []string{"container does not exist", "not found", "no such container"} {
+			if strings.Contains(msg, s) {
+				fmt.Println("WRAPERROR: %v", err)
+				return wrapNotFoundError(err)
+			}
+		}
+	}
+	return err
 }

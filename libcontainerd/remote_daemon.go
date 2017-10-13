@@ -140,15 +140,7 @@ func (r *remote) NewClient(ns string, b Backend) (Client, error) {
 func (r *remote) Cleanup() {
 	if r.daemonPid != -1 {
 		r.shutdownCancel()
-		if r.client != nil {
-			r.client.Close()
-		}
-
 		r.stopDaemon()
-	}
-
-	if r.client != nil {
-		r.client.Close()
 	}
 
 	// cleanup some files
@@ -274,12 +266,14 @@ func (r *remote) monitorConnection(client *containerd.Client) {
 		_, err := client.IsServing(ctx)
 		cancel()
 		if err == nil {
+			transientFailureCount = 0
 			continue
 		}
 
 		select {
 		case <-r.shutdownContext.Done():
 			r.logger.Info("stopping healtcheck following graceful shutdown")
+			client.Close()
 			return
 		default:
 		}
@@ -300,9 +294,11 @@ func (r *remote) monitorConnection(client *containerd.Client) {
 				if err = r.startContainerd(); err != nil {
 					r.logger.WithError(err).Error("failed restarting containerd")
 				} else {
-					client, err = containerd.New(r.GRPC.Address)
+					newClient, err := containerd.New(r.GRPC.Address)
 					if err != nil {
 						r.logger.WithError(err).Error("failed connect to containerd")
+					} else {
+						client = newClient
 					}
 				}
 			}

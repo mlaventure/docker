@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/api/errdefs"
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/swarm"
@@ -207,17 +208,10 @@ func (daemon *Daemon) restore() error {
 		}
 	}
 
-	containsAny := func(s string, candidate []string) bool {
-		for _, c := range candidate {
-			if strings.Contains(s, c) {
-				return true
-			}
-		}
-		return false
-	}
-
-	var wg sync.WaitGroup
-	var mapLock sync.Mutex
+	var (
+		wg      sync.WaitGroup
+		mapLock sync.Mutex
+	)
 	for _, c := range containers {
 		wg.Add(1)
 		go func(c *container.Container) {
@@ -243,13 +237,13 @@ func (daemon *Daemon) restore() error {
 			)
 
 			alive, _, err = daemon.containerd.Restore(context.Background(), c.ID, c.InitializeStdio)
-			if err != nil && !containsAny(err.Error(), []string{"container does not exist", "not found"}) {
+			if err != nil && !errdefs.IsNotFound(err) {
 				logrus.Errorf("Failed to restore container %s with containerd: %s", c.ID, err)
 				return
 			}
 			if !alive {
 				ec, exitedAt, err = daemon.containerd.DeleteTask(context.Background(), c.ID)
-				if err != nil && !containsAny(err.Error(), []string{"no such container", "not found"}) {
+				if err != nil && !errdefs.IsNotFound(err) {
 					logrus.WithError(err).Errorf("Failed to delete container %s from containerd", c.ID)
 					return
 				}

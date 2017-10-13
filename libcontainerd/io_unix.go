@@ -9,6 +9,7 @@ import (
 
 	"github.com/containerd/containerd"
 	"github.com/containerd/fifo"
+	"github.com/pkg/errors"
 )
 
 func newIOPipe(fifos *containerd.FIFOSet) (*IOPipe, error) {
@@ -36,21 +37,21 @@ func newIOPipe(fifos *containerd.FIFOSet) (*IOPipe, error) {
 
 	if fifos.In != "" {
 		if f, err = fifo.OpenFifo(ctx, fifos.In, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_NONBLOCK, 0700); err != nil {
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
 		iop.Stdin = f
 	}
 
 	if fifos.Out != "" {
 		if f, err = fifo.OpenFifo(ctx, fifos.Out, syscall.O_RDONLY|syscall.O_CREAT|syscall.O_NONBLOCK, 0700); err != nil {
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
 		iop.Stdout = f
 	}
 
 	if fifos.Err != "" {
 		if f, err = fifo.OpenFifo(ctx, fifos.Err, syscall.O_RDONLY|syscall.O_CREAT|syscall.O_NONBLOCK, 0700); err != nil {
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
 		iop.Stderr = f
 	}
